@@ -9,7 +9,7 @@ An MCP server that enables querying other LLMs (OpenAI, Gemini, xAI, Anthropic, 
 Install [uv](https://docs.astral.sh/uv/) if you haven't already:
 
 ```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
+brew install uv
 ```
 
 ### Claude Desktop Setup
