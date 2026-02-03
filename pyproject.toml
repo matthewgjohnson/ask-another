@@ -1,0 +1,16 @@
+[project]
+name = "ask-another"
+version = "0.1.0"
+description = "MCP server for querying other LLMs through a unified interface"
+requires-python = ">=3.10"
+dependencies = [
+    "mcp>=1.0.0",
+    "litellm>=1.0.0",
+]
+
+[project.scripts]
+ask-another = "ask_another.server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
