@@ -19,3 +19,6 @@ uv.lock
 
 # OS
 .DS_Store
+
+# Local docs
+Markdown Documentation Standards v3-03.md
