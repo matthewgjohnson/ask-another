@@ -162,8 +162,9 @@ def _get_models(provider: str | None = None) -> list[str]:
 
         try:
             models = _fetch_models(p, _provider_registry[p])
-            _model_cache[p] = (models, now)
-            all_models.extend(models)
+            if models:
+                _model_cache[p] = (models, now)
+                all_models.extend(models)
         except Exception:
             pass
 
@@ -212,7 +213,7 @@ _load_config()
 def list_models(
     provider: str | None = None,
     favourites_only: bool = False,
-) -> list[str]:
+) -> str:
     """List available model identifiers.
 
     Args:
@@ -220,15 +221,15 @@ def list_models(
         favourites_only: Return only favourite models. Defaults to false.
 
     Returns:
-        Array of model identifiers in 'provider/model-name' format.
+        Model identifiers in 'provider/model-name' format, one per line.
     """
     if favourites_only:
         results = list(_favourites)
         if provider:
             results = [f for f in results if f.startswith(f"{provider}/")]
-        return results
+        return "\n".join(results)
 
-    return _get_models(provider=provider)
+    return "\n".join(_get_models(provider=provider))
 
 
 @mcp.tool()
