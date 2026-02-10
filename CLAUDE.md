@@ -19,7 +19,8 @@ There are no tests or linting configured yet.
 
 The entire server lives in a single file: `src/ask_another/server.py`. It exposes two MCP tools:
 
-- **`list_models`** — discovers available models from configured providers, with optional provider filter and favourites-only mode
+- **`search_families`** — discovers model families across configured providers, with optional substring search and favourites filter
+- **`search_models`** — finds specific model identifiers, with optional substring search and favourites filter
 - **`completion`** — proxies a completion request to a specified LLM via LiteLLM, supports full model identifiers or favourite shorthand
 
 Providers are configured via `PROVIDER_*` environment variables with the format `provider-name;api-key`. These are parsed at module import time into a `_provider_registry` dict mapping provider names to API keys.

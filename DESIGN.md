@@ -1,6 +1,6 @@
-# ask-another v2-00
+# ask-another v2-03
 
-**Version**: v2-00
+**Version**: v2-03
 **Date**: 10 February 2026
 **Type**: Specification
 
@@ -8,30 +8,39 @@
 
 ## 1. Overview
 
-ask-another is an MCP server that enables an MCP client (Claude, Gemini, etc.) to query other language models. It provides dynamic model discovery, a favourites system for convenient shorthand access, and a clean completion interface.
+ask-another is an MCP server that enables an MCP client (Claude, Gemini, etc.) to query other language models. It provides tiered model discovery, a favourites system for convenient shorthand access, and a clean completion interface.
 
-Version 2 introduces three architectural changes: provider configuration separates API keys from model selection, dynamic discovery replaces static model allowlists, and favourites enable shorthand access to preferred models.
+Version 2 introduces three architectural changes: provider configuration separates API keys from model selection, dynamic discovery replaces static model allowlists, and a two-tier search (families and models) enables practical discovery across hundreds of models.
 
 -----
 
 ## 2. Tools
 
-The server exposes two tools: one to discover available models and one to query them.
+The server exposes three tools: two for discovery and one for querying models.
 
-### 2.1 list_models
+### 2.1 search_families
 
-Returns available models from configured providers.
+Returns model families available across configured providers. Families are the natural groupings within model identifiers -- `openai`, `openrouter/openai`, `openrouter/anthropic`, `gemini`, and so on.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `provider` | string | no | Filter results to a single provider (e.g. `openai`, `openrouter`) |
-| `favourites_only` | bool | no | Return only models listed in `FAVOURITES`. Defaults to `false` |
+| `search` | string | no | Substring filter applied to family names |
+| `favourites_only` | bool | no | Return only families containing favourite models. Defaults to `false` |
 
-The server queries each provider's model listing API on first invocation and caches the results in memory. Subsequent calls serve from cache until the TTL expires (default: 6 hours), at which point the next call triggers a refresh. The cache rebuilds on server restart.
+Returns matching families as a newline-separated list. This is the recommended first discovery call, providing a compact overview without flooding context with hundreds of model identifiers.
 
-Returns an array of model identifiers in `provider/model-name` format.
+### 2.2 search_models
 
-### 2.2 completion
+Returns specific model identifiers.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `search` | string | no | Substring filter applied to full model identifiers |
+| `favourites_only` | bool | no | Return only favourite models. Defaults to `false` |
+
+Returns matching model identifiers as a newline-separated list.
+
+### 2.3 completion
 
 Sends a prompt to the specified model and returns the response.
 
@@ -44,7 +53,7 @@ Sends a prompt to the specified model and returns the response.
 
 Model resolution follows two steps:
 
-1. Full identifier (e.g. `openai/gpt-4o`) routes directly
+1. Full identifier (e.g. `openai/gpt-5.2-pro`) routes directly
 2. Shorthand (e.g. `openai`) matches against favourites by provider prefix, resolving to the full identifier
 
 Unresolvable shorthand returns an error listing available favourites.
@@ -55,15 +64,18 @@ Returns the text response from the model, or an error message.
 
 ## 3. Model Identifiers
 
-Models use the format `provider/model-name`. Each provider's API returns identifiers in this format natively through LiteLLM, with normalisation applied where needed (see section 6.1).
+Full model identifiers use the format `provider/model-name`, following LiteLLM conventions.
 
 | Provider | Examples |
 |----------|----------|
-| OpenAI | `openai/gpt-4o`, `openai/gpt-4o-mini` |
-| Google | `gemini/gemini-2.5-pro-preview-05-06`, `gemini/gemini-2.0-flash` |
-| OpenRouter | `openrouter/openai/gpt-4o`, `openrouter/anthropic/claude-3.5-sonnet` |
+| OpenAI | `openai/gpt-5.2-pro`, `openai/gpt-4o` |
+| Google | `gemini/gemini-3-pro-preview`, `gemini/gemini-2.5-flash` |
+| xAI | `xai/grok-2`, `xai/grok-2-mini` |
+| OpenRouter | `openrouter/openai/gpt-5-pro`, `openrouter/anthropic/claude-opus-4.5` |
 
 OpenRouter identifiers include the original provider as a path segment, making them naturally distinct from direct provider identifiers.
+
+Families derive naturally from identifier prefixes: a family is all path segments except the last. For direct providers, the family is the provider itself (`openai`, `gemini`). For OpenRouter, the family includes the organisation segment (`openrouter/openai`, `openrouter/anthropic`).
 
 -----
 
@@ -81,7 +93,8 @@ All configuration uses environment variables in Claude Desktop config.
         "PROVIDER_OPENAI": "openai;sk-...",
         "PROVIDER_OPENROUTER": "openrouter;or-...",
         "PROVIDER_GEMINI": "gemini;AIza...",
-        "FAVOURITES": "openai/gpt-4o,gemini/gemini-2.5-pro-preview-05-06,openrouter/anthropic/claude-3.5-sonnet",
+        "PROVIDER_XAI": "xai;xai-...",
+        "FAVOURITES": "openai/gpt-5.2-pro,gemini/gemini-3-pro-preview,xai/grok-2",
         "CACHE_TTL": "360"
       }
     }
@@ -95,13 +108,15 @@ Each `PROVIDER_*` variable defines one provider connection. Format: `provider-na
 
 ### 4.2 Favourites
 
-The `FAVOURITES` variable defines a comma-separated list of preferred model identifiers. Favourites serve two purposes: filtering `list_models` results when `favourites_only` is true, and enabling shorthand resolution in `completion` calls.
+The `FAVOURITES` variable defines a comma-separated list of preferred model identifiers. Favourites enable shorthand resolution in `completion` calls and filtering in discovery tools.
 
-Shorthand resolution extracts the provider prefix from each favourite. When `completion` receives `openai` as the model, it matches the favourite starting with `openai/` and resolves to `openai/gpt-4o`. One favourite per provider prefix is permitted to keep resolution unambiguous.
+Shorthand resolution extracts the provider prefix from each favourite. When `completion` receives `openai` as the model, it matches the favourite starting with `openai/` and resolves to the full identifier. One favourite per provider prefix is permitted to keep resolution unambiguous.
 
-### 4.3 Cache TTL
+### 4.3 Cache
 
-The `CACHE_TTL` variable sets the model list cache duration in minutes. Defaults to 360 (6 hours) if omitted. The cache is in-memory only and rebuilds on server restart.
+The server queries each provider's model listing API on first discovery call and caches the results in memory. Subsequent calls serve from cache until the TTL expires, at which point the next call triggers a refresh. The cache rebuilds on server restart.
+
+The `CACHE_TTL` variable sets the cache duration in minutes. Defaults to 360 (6 hours) if omitted.
 
 -----
 
@@ -113,7 +128,7 @@ The server handles errors as follows.
 |-----------|-----------|
 | Invalid PROVIDER_* format | Error on startup, names the malformed variable |
 | Provider API unreachable | Warn and exclude provider from cache, serve remaining providers |
-| Model not found | Error: "Model not found. Use list_models to see available models" |
+| Model not found | Error: "Model not found. Use search_models to find available models" |
 | Unresolvable shorthand | Error: "No favourite matches '[shorthand]'. Available favourites: [list]" |
 | Duplicate provider prefix in FAVOURITES | Error on startup: "Multiple favourites for provider '[prefix]'" |
 | Rate limit | Pass through provider's error |
@@ -127,23 +142,21 @@ The reference implementation uses Python with uv as package manager and LiteLLM 
 
 ### 6.1 Model Discovery
 
-Model discovery uses LiteLLM as the default mechanism and falls back to direct API calls for providers where LiteLLM support is incomplete.
+Dynamic model discovery uses `get_valid_models(check_provider_endpoint=True)` as the default listing mechanism. Results are cached in a dictionary keyed by provider name with a timestamp for TTL expiry. Empty results are excluded from the cache to prevent provider outages from overwriting previously valid data.
 
-**Default path.** The server calls `litellm.get_valid_models(check_provider_endpoint=True, custom_llm_provider=provider, api_key=key)` for each configured provider. This queries the provider's model listing API and returns available model identifiers.
+### 6.2 ID Normalisation
 
-**ID normalisation.** LiteLLM returns identifiers in inconsistent formats across providers. Some include the provider prefix (e.g. `gemini/gemini-2.0-flash`), others omit it (e.g. `gpt-4o` from OpenAI). The server applies a generic normalisation rule: if an identifier does not start with `{provider}/`, the server prepends it. This is a single rule that works for all providers without per-provider logic.
+Model identifiers from provider APIs may omit the provider prefix. The server applies a generic normalisation rule: prepend `provider/` if the identifier does not already include it.
 
-**Exception handlers.** Providers where `get_valid_models` does not support live API queries are handled through a registry of exception functions. Each exception function makes a direct API call and returns normalised identifiers. OpenRouter is the known exception at time of writing -- its listing endpoint (`GET https://openrouter.ai/api/v1/models`) is public and returns identifiers in `provider/model` format, which the server prepends with `openrouter/`.
+### 6.3 Provider-Specific Handling
 
-### 6.2 Caching
-
-Results are cached in a dictionary keyed by provider name, with a timestamp for TTL expiry. On cache miss or expiry, the server fetches fresh results for that provider only.
+Providers with non-standard listing APIs use an exception handler registry. OpenRouter requires custom handling due to its different endpoint structure and response format.
 
 -----
 
 ## 7. Future Considerations
 
-The following features are not included in v2: conversation history and multi-turn support, streaming responses, token counting and cost tracking, image generation via compatible providers, and provider-specific tools such as Grok search and Gemini grounding.
+The following features are not included in v2: conversation history and multi-turn support, streaming responses, token counting and cost tracking, model metadata in search results (context window, pricing), image generation via compatible providers, and provider-specific tools such as Grok search and Gemini grounding.
 
 -----
 

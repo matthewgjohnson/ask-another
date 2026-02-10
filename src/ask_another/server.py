@@ -182,7 +182,7 @@ def _resolve_model(model: str) -> tuple[str, str]:
         for provider, api_key in _provider_registry.items():
             if model.startswith(f"{provider}/"):
                 return model, api_key
-        raise ValueError("Model not found. Use list_models to see available models")
+        raise ValueError("Model not found. Use search_models to find available models")
 
     # Shorthand: match against favourites by provider prefix
     for fav in _favourites:
@@ -209,27 +209,62 @@ _load_config()
 # ---------------------------------------------------------------------------
 
 
+def _get_family(model_id: str) -> str:
+    """Extract family from a model identifier (all path segments except the last)."""
+    return model_id.rsplit("/", 1)[0]
+
+
 @mcp.tool()
-def list_models(
-    provider: str | None = None,
+def search_families(
+    search: str | None = None,
     favourites_only: bool = False,
 ) -> str:
-    """List available model identifiers.
+    """Search model families across configured providers. Families are natural
+    groupings like 'openai', 'gemini', 'openrouter/openai', 'openrouter/anthropic'.
+    This is the recommended first discovery call.
 
     Args:
-        provider: Filter results to a single provider (e.g. 'openai', 'openrouter')
+        search: Substring filter applied to family names
+        favourites_only: Return only families containing favourite models. Defaults to false.
+
+    Returns:
+        Matching family names, one per line.
+    """
+    if favourites_only:
+        families = sorted(set(_get_family(f) for f in _favourites))
+    else:
+        all_models = _get_models()
+        families = sorted(set(_get_family(m) for m in all_models))
+
+    if search:
+        families = [f for f in families if search.lower() in f.lower()]
+
+    return "\n".join(families)
+
+
+@mcp.tool()
+def search_models(
+    search: str | None = None,
+    favourites_only: bool = False,
+) -> str:
+    """Search for specific model identifiers across configured providers.
+
+    Args:
+        search: Substring filter applied to full model identifiers
         favourites_only: Return only favourite models. Defaults to false.
 
     Returns:
-        Model identifiers in 'provider/model-name' format, one per line.
+        Matching model identifiers, one per line.
     """
     if favourites_only:
-        results = list(_favourites)
-        if provider:
-            results = [f for f in results if f.startswith(f"{provider}/")]
-        return "\n".join(results)
+        models = list(_favourites)
+    else:
+        models = _get_models()
 
-    return "\n".join(_get_models(provider=provider))
+    if search:
+        models = [m for m in models if search.lower() in m.lower()]
+
+    return "\n".join(models)
 
 
 @mcp.tool()
