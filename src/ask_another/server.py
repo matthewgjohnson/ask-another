@@ -51,25 +51,30 @@ def _parse_provider_config(var_name: str, value: str) -> tuple[str, str]:
     return provider, api_key
 
 
+def _get_family(model_id: str) -> str:
+    """Extract family from a model identifier (all path segments except the last)."""
+    return model_id.rsplit("/", 1)[0]
+
+
 def _parse_favourites(value: str) -> list[str]:
     """Parse the FAVOURITES environment variable.
 
-    Validates one favourite per provider prefix.
+    Validates one favourite per family.
     """
     if not value.strip():
         return []
 
     favourites = [f.strip() for f in value.split(",") if f.strip()]
 
-    seen_prefixes: dict[str, str] = {}
+    seen_families: dict[str, str] = {}
     for fav in favourites:
-        prefix = fav.split("/")[0]
-        if prefix in seen_prefixes:
+        family = _get_family(fav)
+        if family in seen_families:
             raise ValueError(
-                f"Multiple favourites for provider '{prefix}': "
-                f"'{seen_prefixes[prefix]}' and '{fav}'"
+                f"Multiple favourites for family '{family}': "
+                f"'{seen_families[family]}' and '{fav}'"
             )
-        seen_prefixes[prefix] = fav
+        seen_families[family] = fav
 
     return favourites
 
@@ -177,19 +182,33 @@ def _get_models(provider: str | None = None) -> list[str]:
 
 
 def _resolve_model(model: str) -> tuple[str, str]:
-    """Resolve a model identifier or shorthand to (full_id, api_key)."""
+    """Resolve a model identifier or shorthand to (full_id, api_key).
+
+    Resolution order:
+    1. Shorthand: if any favourite starts with model/, resolve via favourites
+    2. Full identifier: route directly by matching provider prefix
+    """
+    # Try shorthand resolution against favourites first
+    matches = [fav for fav in _favourites if fav.startswith(f"{model}/")]
+
+    if len(matches) == 1:
+        fav = matches[0]
+        for provider, api_key in _provider_registry.items():
+            if fav.startswith(f"{provider}/"):
+                return fav, api_key
+
+    if len(matches) > 1:
+        match_list = ", ".join(matches)
+        raise ValueError(
+            f"Ambiguous shorthand '{model}' matches multiple favourites: {match_list}. "
+            f"Use a more specific shorthand (e.g. '{_get_family(matches[0])}')"
+        )
+
+    # Full identifier: route directly
     if "/" in model:
         for provider, api_key in _provider_registry.items():
             if model.startswith(f"{provider}/"):
                 return model, api_key
-        raise ValueError("Model not found. Use search_models to find available models")
-
-    # Shorthand: match against favourites by provider prefix
-    for fav in _favourites:
-        if fav.startswith(f"{model}/"):
-            for provider, api_key in _provider_registry.items():
-                if fav.startswith(f"{provider}/"):
-                    return fav, api_key
 
     fav_list = ", ".join(_favourites) if _favourites else "(none configured)"
     raise ValueError(
@@ -207,11 +226,6 @@ _load_config()
 # ---------------------------------------------------------------------------
 # Tools
 # ---------------------------------------------------------------------------
-
-
-def _get_family(model_id: str) -> str:
-    """Extract family from a model identifier (all path segments except the last)."""
-    return model_id.rsplit("/", 1)[0]
 
 
 @mcp.tool()
