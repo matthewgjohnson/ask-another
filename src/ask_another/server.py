@@ -9,8 +9,6 @@ from collections.abc import Callable
 
 from mcp.server.fastmcp import FastMCP
 
-mcp = FastMCP("ask-another")
-
 # Provider registry: {provider_name: api_key}
 _provider_registry: dict[str, str] = {}
 
@@ -223,6 +221,27 @@ def _resolve_model(model: str) -> tuple[str, str]:
 _load_config()
 
 
+def _build_instructions() -> str:
+    """Build server instructions dynamically from config."""
+    lines = [
+        "Purpose:",
+        "  - Ask another LLM for a second opinion.",
+        "  - Provide access to other models through litellm.",
+        "Howto:",
+        "  - For a quick query, use completion with a favourite model (see below).",
+        "  - To use another model: search_families → search_models → completion.",
+        "  - Never guess model IDs.",
+    ]
+    if _favourites:
+        lines.append("Favourite Models:")
+        for fav in _favourites:
+            lines.append(f"  - {fav}")
+    return "\n".join(lines)
+
+
+mcp = FastMCP("ask-another", instructions=_build_instructions())
+
+
 # ---------------------------------------------------------------------------
 # Tools
 # ---------------------------------------------------------------------------
@@ -233,16 +252,13 @@ def search_families(
     search: str | None = None,
     favourites_only: bool = False,
 ) -> str:
-    """Search model families across configured providers. Families are natural
-    groupings like 'openai', 'gemini', 'openrouter/openai', 'openrouter/anthropic'.
-    This is the recommended first discovery call.
+    """Browse available provider groupings (e.g. 'openai', 'openrouter/deepseek').
+    Use this to explore what's available before drilling into specific models
+    with search_models.
 
     Args:
         search: Substring filter applied to family names
-        favourites_only: Return only families containing favourite models. Defaults to false.
-
-    Returns:
-        Matching family names, one per line.
+        favourites_only: Return only families containing favourite models
     """
     if favourites_only:
         families = sorted(set(_get_family(f) for f in _favourites))
@@ -261,14 +277,12 @@ def search_models(
     search: str | None = None,
     favourites_only: bool = False,
 ) -> str:
-    """Search for specific model identifiers across configured providers.
+    """Find exact model identifiers. Always call this to verify a model ID
+    before passing it to completion — do not guess IDs.
 
     Args:
         search: Substring filter applied to full model identifiers
-        favourites_only: Return only favourite models. Defaults to false.
-
-    Returns:
-        Matching model identifiers, one per line.
+        favourites_only: Return only favourite models
     """
     if favourites_only:
         models = list(_favourites)
@@ -286,38 +300,56 @@ def completion(
     model: str,
     prompt: str,
     system: str | None = None,
-    temperature: float = 1.0,
+    temperature: float | None = None,
 ) -> str:
-    """Get a completion from the specified LLM.
+    """Call a model. Use a favourite shorthand (e.g. 'openai') or an exact
+    model ID verified via search_models. Do not set temperature unless you
+    have a specific reason — some models reject non-default values.
 
     Args:
-        model: Full model identifier (e.g. 'openai/gpt-4o') or favourite shorthand (e.g. 'openai')
+        model: Full model identifier (e.g. 'openai/gpt-4o') or favourite shorthand (e.g. 'openai').
+               Use search_models to find valid identifiers.
         prompt: The user prompt to send to the model
         system: Optional system prompt
-        temperature: Sampling temperature (0.0-2.0, default 1.0)
-
-    Returns:
-        The model's text response
+        temperature: Sampling temperature (0.0-2.0). Omit to use model default.
     """
     import litellm
 
     full_model, api_key = _resolve_model(model)
 
-    if not 0.0 <= temperature <= 2.0:
+    if temperature is not None and not 0.0 <= temperature <= 2.0:
         raise ValueError("Temperature must be between 0.0 and 2.0")
+
+    # Validate model exists in discovered models
+    provider = full_model.split("/")[0]
+    known_models = _get_models(provider)
+    if known_models and full_model not in known_models:
+        model_name = full_model.split("/", 1)[1] if "/" in full_model else full_model
+        suggestions = [
+            m for m in known_models
+            if model_name.split("-")[0] in m.lower()
+        ][:5]
+        msg = f"Model '{full_model}' not found in {provider}'s model list."
+        if suggestions:
+            msg += f" Similar models: {', '.join(suggestions)}"
+        msg += " Use search_models to find valid identifiers."
+        raise ValueError(msg)
 
     messages = []
     if system:
         messages.append({"role": "system", "content": system})
     messages.append({"role": "user", "content": prompt})
 
-    response = litellm.completion(
-        model=full_model,
-        messages=messages,
-        temperature=temperature,
-        api_key=api_key,
-        timeout=60,
-    )
+    kwargs: dict = {
+        "model": full_model,
+        "messages": messages,
+        "api_key": api_key,
+        "timeout": 60,
+    }
+    if temperature is not None:
+        kwargs["temperature"] = temperature
+
+    response = litellm.completion(**kwargs)
 
     return response.choices[0].message.content
 
