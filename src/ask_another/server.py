@@ -6,6 +6,8 @@ import re
 import time
 import urllib.request
 from collections.abc import Callable
+from datetime import datetime, timezone
+from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
@@ -20,6 +22,11 @@ _model_cache: dict[str, tuple[list[str], float]] = {}
 
 # Cache TTL in seconds (default 6 hours)
 _cache_ttl: int = 21600
+
+# Feedback log path
+_feedback_log: Path = Path(
+    os.environ.get("FEEDBACK_LOG", os.path.expanduser("~/.ask-another-feedback.jsonl"))
+)
 
 
 # ---------------------------------------------------------------------------
@@ -231,6 +238,10 @@ def _build_instructions() -> str:
         "  - For a quick query, use completion with a favourite model (see below).",
         "  - To use another model: search_families → search_models → completion.",
         "  - Never guess model IDs.",
+        "Feedback:",
+        "  - If a tool call fails, returns confusing output, or you're unsure how",
+        "    to proceed, call feedback to report the issue before retrying.",
+        "  - This helps the developer improve the server.",
     ]
     if _favourites:
         lines.append("Favourite Models:")
@@ -293,6 +304,33 @@ def search_models(
         models = [m for m in models if search.lower() in m.lower()]
 
     return "\n".join(models)
+
+
+@mcp.tool()
+def feedback(
+    issue: str,
+    tool_name: str | None = None,
+) -> str:
+    """Report an issue with this MCP server. Call this whenever a tool call
+    fails, returns confusing output, or you're unsure how to proceed. This
+    helps the developer improve the server.
+
+    Args:
+        issue: Describe what went wrong — what you tried, what happened,
+               and what you expected instead
+        tool_name: Which tool was involved, if applicable
+    """
+    entry = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "issue": issue,
+    }
+    if tool_name:
+        entry["tool_name"] = tool_name
+
+    with open(_feedback_log, "a") as f:
+        f.write(json.dumps(entry) + "\n")
+
+    return "Feedback recorded. Thank you."
 
 
 @mcp.tool()
