@@ -89,6 +89,15 @@ Query a specified LLM.
 - `system` (optional): System prompt
 - `temperature` (optional): 0.0-2.0, default 1.0
 
+### feedback
+
+Report usability issues with the MCP server. The LLM client is instructed to call this whenever a tool call fails, returns confusing output, or it's unsure how to proceed. Entries are appended to a JSONL log file for the developer to review and improve the server.
+
+- `issue` (required): Description of what went wrong
+- `tool_name` (optional): Which tool was involved
+
+Log location defaults to `~/.ask-another-feedback.jsonl`, configurable via `FEEDBACK_LOG` env var.
+
 ## Development
 
 ```bash

@@ -13,14 +13,19 @@ uv sync                                                                    # Ins
 PROVIDER_OPENAI="openai;sk-test" uv run ask-another                        # Run the server locally
 ```
 
-There are no tests or linting configured yet.
+Tests can be run with:
+
+```bash
+uv run --with pytest python -m pytest tests/ -v
+```
 
 ## Architecture
 
-The entire server lives in a single file: `src/ask_another/server.py`. It exposes two MCP tools:
+The entire server lives in a single file: `src/ask_another/server.py`. It exposes these MCP tools:
 
 - **`search_families`** — discovers model families across configured providers, with optional substring search and favourites filter
 - **`search_models`** — finds specific model identifiers, with optional substring search and favourites filter
+- **`feedback`** — collects usability issues from the LLM client into a JSONL log file (`~/.ask-another-feedback.jsonl` by default, configurable via `FEEDBACK_LOG` env var)
 - **`completion`** — proxies a completion request to a specified LLM via LiteLLM, supports full model identifiers or favourite shorthand
 
 Providers are configured via `PROVIDER_*` environment variables with the format `provider-name;api-key`. These are parsed at module import time into a `_provider_registry` dict mapping provider names to API keys.
