@@ -27,6 +27,9 @@ The entire server lives in a single file: `src/ask_another/server.py`. It expose
 - **`search_models`** — finds specific model identifiers, with optional substring search and favourites filter
 - **`feedback`** — collects usability issues from the LLM client into a JSONL log file (`~/.ask-another-feedback.jsonl` by default, configurable via `FEEDBACK_LOG` env var)
 - **`completion`** — proxies a completion request to a specified LLM via LiteLLM, supports full model identifiers or favourite shorthand
+- **`start_research`** — starts a deep research task that runs in the background via a lifespan task group. Supports two paths: OpenRouter (Perplexity/OpenAI via `litellm.completion`) and Gemini deep research (via `litellm.interactions.create` with polling). Blocks until results arrive or timeout, then returns results or a job handle. If interrupted (user hits escape), the research continues in the background.
+- **`check_research`** — lists all research jobs as a markdown table, or retrieves full results for a specific job_id
+- **`cancel_research`** — cancels a running research task by its job_id
 
 Providers are configured via `PROVIDER_*` environment variables with the format `provider-name;api-key`. These are parsed at module import time into a `_provider_registry` dict mapping provider names to API keys.
 
@@ -35,6 +38,10 @@ Model discovery uses `litellm.get_valid_models(check_provider_endpoint=True)` by
 Favourites (`FAVOURITES` env var) enable shorthand resolution: passing `openai` to completion resolves to the configured OpenAI favourite.
 
 The entrypoint is `ask_another.server:main` (defined in `pyproject.toml` `[project.scripts]`), which calls `mcp.run()` on the FastMCP instance.
+
+## TODO
+
+- **Add tests for research tools** — `start_research`, `check_research`, and `cancel_research` have no tests yet. Cover: happy path (job completes within timeout), timeout (job continues in background), cancellation, job listing table format, and the Gemini Interactions API path. Use `mcp.client.stdio.stdio_client` + `ClientSession` for integration tests (see `tests/test_feedback.py` for patterns). The Gemini path will need mocking since `litellm.interactions.create/get` requires a live API key.
 
 ## Key Dependencies
 
