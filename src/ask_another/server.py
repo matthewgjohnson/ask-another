@@ -1,15 +1,22 @@
 """MCP server implementation for ask-another v2."""
 
+from __future__ import annotations
+
+import asyncio
 import json
 import os
 import re
 import time
 import urllib.request
 from collections.abc import Callable
+from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
-from mcp.server.fastmcp import FastMCP
+import anyio
+from mcp.server.fastmcp import Context, FastMCP
 
 # Provider registry: {provider_name: api_key}
 _provider_registry: dict[str, str] = {}
@@ -27,6 +34,60 @@ _cache_ttl: int = 21600
 _feedback_log: Path = Path(
     os.environ.get("FEEDBACK_LOG", os.path.expanduser("~/.ask-another-feedback.jsonl"))
 )
+
+
+# ---------------------------------------------------------------------------
+# Research job store
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class ResearchJob:
+    """Tracks a background research task."""
+
+    job_id: int
+    model: str
+    query: str
+    status: str = "in_progress"  # in_progress | completed | failed | cancelled
+    started: str = ""
+    ended: str = ""
+    result: str = ""
+    citations: list[str] = field(default_factory=list)
+    error: str = ""
+    _task_scope: anyio.CancelScope | None = field(default=None, repr=False)
+
+
+class JobStore:
+    """In-memory store for research jobs, shared via lifespan context."""
+
+    def __init__(self, task_group: anyio.abc.TaskGroup) -> None:
+        self.task_group = task_group
+        self._jobs: dict[int, ResearchJob] = {}
+        self._next_id: int = 1
+
+    def create_job(self, model: str, query: str) -> ResearchJob:
+        job = ResearchJob(
+            job_id=self._next_id,
+            model=model,
+            query=query,
+            started=datetime.now(timezone.utc).strftime("%H:%M"),
+        )
+        self._jobs[job.job_id] = job
+        self._next_id += 1
+        return job
+
+    def get_job(self, job_id: int) -> ResearchJob | None:
+        return self._jobs.get(job_id)
+
+    def all_jobs(self) -> list[ResearchJob]:
+        return list(self._jobs.values())
+
+
+@asynccontextmanager
+async def _lifespan(server: FastMCP) -> Any:
+    """Lifespan context providing a task group and job store."""
+    async with anyio.create_task_group() as tg:
+        yield {"job_store": JobStore(tg)}
 
 
 # ---------------------------------------------------------------------------
@@ -237,11 +298,16 @@ def _build_instructions() -> str:
         "Howto:",
         "  - For a quick query, use completion with a favourite model (see below).",
         "  - To use another model: search_families → search_models → completion.",
+        "  - For deep research tasks, use start_research. If it is interrupted or",
+        "    times out, the task continues in the background — use check_research",
+        "    to retrieve results later, or cancel_research to stop a running task.",
         "  - Never guess model IDs.",
         "Feedback:",
-        "  - If a tool call fails, returns confusing output, or you're unsure how",
-        "    to proceed, call feedback to report the issue before retrying.",
-        "  - This helps the developer improve the server.",
+        "  - We'd love to hear how ask-another is working for you. Call",
+        "    feedback to share issues, suggestions, or anything that felt",
+        "    harder than it should be.",
+        "  - Call feedback before retrying if you receive confusing output",
+        "    or a tool call fails — it helps us improve.",
     ]
     if _favourites:
         lines.append("Favourite Models:")
@@ -250,7 +316,7 @@ def _build_instructions() -> str:
     return "\n".join(lines)
 
 
-mcp = FastMCP("ask-another", instructions=_build_instructions())
+mcp = FastMCP("ask-another", instructions=_build_instructions(), lifespan=_lifespan)
 
 
 # ---------------------------------------------------------------------------
@@ -289,7 +355,7 @@ def search_models(
     favourites_only: bool = False,
 ) -> str:
     """Find exact model identifiers. Always call this to verify a model ID
-    before passing it to completion — do not guess IDs.
+    before passing it to completion or start_research — do not guess IDs.
 
     Args:
         search: Substring filter applied to full model identifiers
@@ -306,18 +372,28 @@ def search_models(
     return "\n".join(models)
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations={
+        "readOnlyHint": True,
+        "idempotentHint": True,
+    }
+)
 def feedback(
     issue: str,
     tool_name: str | None = None,
 ) -> str:
-    """Report an issue with this MCP server. Call this whenever a tool call
-    fails, returns confusing output, or you're unsure how to proceed. This
-    helps the developer improve the server.
+    """Help us improve ask-another by sharing your experience. Call this
+    whenever you're unsure how to proceed, receive confusing output, or
+    a tool doesn't behave as expected. We also welcome suggestions — if
+    a workflow felt more complex than it should be, if you had to guess
+    at parameter values, or if something could simply work better.
+
+    Every piece of feedback helps us make ask-another more useful.
+    This tool is lightweight and safe to call at any time.
 
     Args:
-        issue: Describe what went wrong — what you tried, what happened,
-               and what you expected instead
+        issue: Share what happened and what you expected. For suggestions,
+               describe what could work better and why.
         tool_name: Which tool was involved, if applicable
     """
     entry = {
@@ -340,9 +416,11 @@ def completion(
     system: str | None = None,
     temperature: float | None = None,
 ) -> str:
-    """Call a model. Use a favourite shorthand (e.g. 'openai') or an exact
-    model ID verified via search_models. Do not set temperature unless you
-    have a specific reason — some models reject non-default values.
+    """Call a model for a quick completion. Use this for standard prompts that
+    return in seconds — use start_research instead for deep research tasks.
+    Use a favourite shorthand (e.g. 'openai') or an exact model ID verified
+    via search_models. Do not set temperature unless you have a specific
+    reason — some models reject non-default values.
 
     Args:
         model: Full model identifier (e.g. 'openai/gpt-4o') or favourite shorthand (e.g. 'openai').
@@ -371,6 +449,7 @@ def completion(
         if suggestions:
             msg += f" Similar models: {', '.join(suggestions)}"
         msg += " Use search_models to find valid identifiers."
+        msg += " If this seems like a bug, call the feedback tool to report it."
         raise ValueError(msg)
 
     messages = []
@@ -390,6 +469,241 @@ def completion(
     response = litellm.completion(**kwargs)
 
     return response.choices[0].message.content
+
+
+def _get_job_store(ctx: Context) -> JobStore:
+    """Extract the JobStore from a tool's Context."""
+    return ctx.request_context.lifespan_context["job_store"]
+
+
+def _run_research_completion_sync(job: ResearchJob, api_key: str) -> None:
+    """Execute a research task via litellm.completion (blocking)."""
+    import litellm
+
+    try:
+        response = litellm.completion(
+            model=job.model,
+            messages=[{"role": "user", "content": job.query}],
+            api_key=api_key,
+            timeout=1800,
+        )
+        job.result = response.choices[0].message.content
+        job.citations = getattr(response, "citations", []) or []
+        job.status = "completed"
+    except Exception as exc:
+        job.status = "failed"
+        job.error = str(exc)
+    finally:
+        job.ended = datetime.now(timezone.utc).strftime("%H:%M")
+
+
+async def _run_research_completion(job: ResearchJob, api_key: str) -> None:
+    """Run the blocking completion in a thread to avoid blocking the event loop."""
+    await anyio.to_thread.run_sync(lambda: _run_research_completion_sync(job, api_key))
+
+
+def _run_research_gemini_sync(job: ResearchJob, api_key: str) -> None:
+    """Execute a research task via Gemini Interactions API (blocking poll loop)."""
+    import litellm.interactions
+
+    agent_name = job.model.split("/", 1)[1]  # strip "gemini/" prefix
+
+    try:
+        response = litellm.interactions.create(
+            agent=agent_name,
+            input=job.query,
+            background=True,
+            extra_headers={"x-goog-api-key": api_key},
+        )
+        interaction_id = response.id
+
+        # Poll until complete or failed
+        while True:
+            status_resp = litellm.interactions.get(
+                interaction_id=interaction_id,
+                extra_headers={"x-goog-api-key": api_key},
+            )
+            if status_resp.status == "completed":
+                outputs = status_resp.outputs or []
+                if outputs:
+                    last = outputs[-1]
+                    job.result = last.get("text", "") if isinstance(last, dict) else getattr(last, "text", "")
+                    annotations = last.get("annotations", []) if isinstance(last, dict) else getattr(last, "annotations", [])
+                    job.citations = [
+                        a.get("source", "") if isinstance(a, dict) else getattr(a, "source", "")
+                        for a in (annotations or [])
+                    ]
+                job.status = "completed"
+                return
+            elif status_resp.status in ("failed", "cancelled"):
+                job.status = "failed"
+                job.error = getattr(status_resp, "error", "Unknown error")
+                return
+
+            time.sleep(10)
+
+    except Exception as exc:
+        job.status = "failed"
+        job.error = str(exc)
+    finally:
+        job.ended = datetime.now(timezone.utc).strftime("%H:%M")
+
+
+async def _run_research_gemini(job: ResearchJob, api_key: str) -> None:
+    """Run the Gemini Interactions API polling in a thread."""
+    await anyio.to_thread.run_sync(lambda: _run_research_gemini_sync(job, api_key))
+
+
+def _is_gemini_deep_research(model: str) -> bool:
+    """Check if a model ID is a Gemini deep research agent."""
+    return model.startswith("gemini/deep-research")
+
+
+@mcp.tool()
+async def start_research(
+    model: str,
+    query: str,
+    timeout: int = 300,
+    ctx: Context = None,
+) -> str:
+    """Start a deep research task. This submits a research query to a model
+    that will search the web, read sources, and synthesize a cited report.
+
+    Research tasks can take minutes to complete. This tool will wait for
+    results and return them directly if the task finishes in time. If it
+    is interrupted or the task times out, the research continues in the
+    background — use check_research to retrieve results later.
+
+    Args:
+        model: Model to use (e.g. 'openrouter/perplexity/sonar-deep-research').
+               Use search_models with 'deep-research' to find available models.
+        query: The research question or topic to investigate.
+        timeout: Max seconds to wait for results (default 300). If exceeded,
+                 the task continues in the background.
+    """
+    full_model, api_key = _resolve_model(model)
+    job_store = _get_job_store(ctx)
+    job = job_store.create_job(model=full_model, query=query)
+
+    # Pick the right research path
+    if _is_gemini_deep_research(full_model):
+        research_fn = _run_research_gemini
+    else:
+        research_fn = _run_research_completion
+
+    # Spawn the research task in the background task group
+    cancel_scope = anyio.CancelScope()
+    job._task_scope = cancel_scope
+
+    async def _wrapped_task() -> None:
+        with cancel_scope:
+            await research_fn(job, api_key)
+
+    job_store.task_group.start_soon(_wrapped_task)
+
+    # Wait for results or timeout, handling interruption gracefully
+    try:
+        deadline = time.time() + timeout
+        while job.status == "in_progress":
+            if time.time() >= deadline:
+                return (
+                    f"Research is still running (job_id={job.job_id}). "
+                    f"Use check_research to retrieve results later, "
+                    f"or cancel_research to stop it."
+                )
+            await anyio.sleep(2)
+
+    except (asyncio.CancelledError, anyio.get_cancelled_exc_class()):
+        # User hit escape — job continues in background
+        raise
+
+    if job.status == "completed":
+        result: dict[str, Any] = {"report": job.result}
+        if job.citations:
+            result["citations"] = job.citations
+        return json.dumps(result)
+
+    return f"Research failed (job_id={job.job_id}): {job.error}"
+
+
+@mcp.tool()
+async def check_research(
+    job_id: int | None = None,
+    ctx: Context = None,
+) -> str:
+    """Check on research tasks started with start_research.
+
+    Called with no arguments, returns a table of all research tasks with
+    their job_id, model, status, query, and timing.
+    Called with a job_id, returns the full results of a completed task
+    including the research report and cited sources.
+
+    Use this after start_research was interrupted or timed out, or to
+    poll a long-running task.
+
+    Args:
+        job_id: A specific job to retrieve. Omit to list all jobs.
+    """
+    job_store = _get_job_store(ctx)
+
+    if job_id is not None:
+        job = job_store.get_job(job_id)
+        if not job:
+            return f"No job found with job_id={job_id}. Use check_research with no arguments to list all jobs."
+
+        if job.status == "in_progress":
+            return f"Job {job.job_id} is still in progress (started {job.started})."
+
+        if job.status == "completed":
+            result: dict[str, Any] = {"report": job.result}
+            if job.citations:
+                result["citations"] = job.citations
+            return json.dumps(result)
+
+        return f"Job {job.job_id} {job.status}: {job.error}" if job.error else f"Job {job.job_id} {job.status}."
+
+    # List all jobs as markdown table
+    jobs = job_store.all_jobs()
+    if not jobs:
+        return "No research tasks found."
+
+    lines = [
+        "| job_id | model | status | query | started | ended |",
+        "|--------|-------|--------|-------|---------|-------|",
+    ]
+    for j in jobs:
+        q = j.query[:50] + "\u2026" if len(j.query) > 50 else j.query
+        lines.append(
+            f"| {j.job_id} | {j.model} | {j.status} | {q} | {j.started} | {j.ended} |"
+        )
+    return "\n".join(lines)
+
+
+@mcp.tool()
+async def cancel_research(
+    job_id: int,
+    ctx: Context = None,
+) -> str:
+    """Cancel a running research task. Use check_research first to find
+    the job_id of the task you want to cancel.
+
+    Args:
+        job_id: The job to cancel.
+    """
+    job_store = _get_job_store(ctx)
+    job = job_store.get_job(job_id)
+
+    if not job:
+        return f"No job found with job_id={job_id}."
+
+    if job.status != "in_progress":
+        return f"Job {job_id} is already {job.status}."
+
+    if job._task_scope:
+        job._task_scope.cancel()
+    job.status = "cancelled"
+    job.ended = datetime.now(timezone.utc).strftime("%H:%M")
+    return f"Job {job_id} cancelled."
 
 
 def main() -> None:
