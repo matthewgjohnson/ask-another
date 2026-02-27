@@ -476,17 +476,28 @@ def _get_job_store(ctx: Context) -> JobStore:
     return ctx.request_context.lifespan_context["job_store"]
 
 
+def _is_openai_research(model: str) -> bool:
+    """Check if a model needs web_search_preview tools for research."""
+    return model.startswith("openai/") and "deep-research" in model
+
+
 def _run_research_completion_sync(job: ResearchJob, api_key: str) -> None:
     """Execute a research task via litellm.completion (blocking)."""
     import litellm
 
+    kwargs: dict[str, Any] = {
+        "model": job.model,
+        "messages": [{"role": "user", "content": job.query}],
+        "api_key": api_key,
+        "timeout": 1800,
+    }
+
+    # OpenAI deep research models need web_search_preview tool
+    if _is_openai_research(job.model):
+        kwargs["tools"] = [{"type": "web_search_preview"}]
+
     try:
-        response = litellm.completion(
-            model=job.model,
-            messages=[{"role": "user", "content": job.query}],
-            api_key=api_key,
-            timeout=1800,
-        )
+        response = litellm.completion(**kwargs)
         job.result = response.choices[0].message.content
         job.citations = getattr(response, "citations", []) or []
         job.status = "completed"
@@ -513,7 +524,7 @@ def _run_research_gemini_sync(job: ResearchJob, api_key: str) -> None:
             agent=agent_name,
             input=job.query,
             background=True,
-            extra_headers={"x-goog-api-key": api_key},
+            api_key=api_key,
         )
         interaction_id = response.id
 
@@ -521,7 +532,7 @@ def _run_research_gemini_sync(job: ResearchJob, api_key: str) -> None:
         while True:
             status_resp = litellm.interactions.get(
                 interaction_id=interaction_id,
-                extra_headers={"x-goog-api-key": api_key},
+                api_key=api_key,
             )
             if status_resp.status == "completed":
                 outputs = status_resp.outputs or []
