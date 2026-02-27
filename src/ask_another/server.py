@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import json
 import os
 import re
@@ -14,6 +15,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 import anyio
 from mcp.server.fastmcp import Context, FastMCP
@@ -29,6 +32,19 @@ _model_cache: dict[str, tuple[list[str], float]] = {}
 
 # Cache TTL in seconds (default 6 hours)
 _cache_ttl: int = 21600
+
+
+@dataclass(frozen=True)
+class ModelMeta:
+    """Metadata for a model from the PSV catalog."""
+
+    model_id: str
+    favourite: bool
+    description: str
+
+
+# Model catalog: {model_id: ModelMeta}
+_model_catalog: dict[str, ModelMeta] = {}
 
 # Feedback log path
 _feedback_log: Path = Path(
@@ -145,9 +161,43 @@ def _parse_favourites(value: str) -> list[str]:
     return favourites
 
 
+def _load_psv() -> dict[str, ModelMeta]:
+    """Load the model catalog from a PSV file.
+
+    Looks for the file at: MODELS_PSV env var, then next to this module.
+    Uses anchor-on-ends parsing: parts[0]=model_id, parts[-1]=description,
+    parts[-2]=favourite flag. Robust to column count changes.
+    """
+    psv_path_str = os.environ.get("MODELS_PSV", "")
+    if psv_path_str:
+        psv_path = Path(psv_path_str)
+    else:
+        psv_path = Path(__file__).parent / "models.psv"
+
+    if not psv_path.is_file():
+        logger.debug("No PSV catalog found at %s", psv_path)
+        return {}
+
+    catalog: dict[str, ModelMeta] = {}
+    for line in psv_path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("model|"):
+            continue
+        parts = line.split("|")
+        if len(parts) < 3:
+            continue
+        model_id = parts[0]
+        description = parts[-1]
+        favourite = parts[-2].lower() == "yes" if len(parts) >= 2 else False
+        catalog[model_id] = ModelMeta(
+            model_id=model_id, favourite=favourite, description=description
+        )
+    return catalog
+
+
 def _load_config() -> None:
     """Scan environment and populate provider registry, favourites, and cache TTL."""
-    global _provider_registry, _favourites, _cache_ttl
+    global _provider_registry, _favourites, _cache_ttl, _model_catalog
 
     _provider_registry = {}
     provider_pattern = re.compile(r"^PROVIDER_\w+$")
@@ -165,6 +215,14 @@ def _load_config() -> None:
         _cache_ttl = int(ttl_str) * 60
     except ValueError:
         raise ValueError(f"Invalid CACHE_TTL value: {ttl_str}")
+
+    _model_catalog = _load_psv()
+
+    # Bootstrap favourites from PSV if FAVOURITES env var is empty
+    if not _favourites and _model_catalog:
+        _favourites = [
+            meta.model_id for meta in _model_catalog.values() if meta.favourite
+        ]
 
 
 # ---------------------------------------------------------------------------
@@ -312,7 +370,11 @@ def _build_instructions() -> str:
     if _favourites:
         lines.append("Favourite Models:")
         for fav in _favourites:
-            lines.append(f"  - {fav}")
+            meta = _model_catalog.get(fav)
+            if meta and meta.description:
+                lines.append(f"  - {fav} — {meta.description}")
+            else:
+                lines.append(f"  - {fav}")
     return "\n".join(lines)
 
 
@@ -368,6 +430,16 @@ def search_models(
 
     if search:
         models = [m for m in models if search.lower() in m.lower()]
+
+    if favourites_only:
+        lines = []
+        for m in models:
+            meta = _model_catalog.get(m)
+            if meta and meta.description:
+                lines.append(f"{m} — {meta.description}")
+            else:
+                lines.append(m)
+        return "\n".join(lines)
 
     return "\n".join(models)
 

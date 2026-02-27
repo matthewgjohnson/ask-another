@@ -35,7 +35,17 @@ Providers are configured via `PROVIDER_*` environment variables with the format 
 
 Model discovery uses `litellm.get_valid_models(check_provider_endpoint=True)` by default, with exception handlers for providers where LiteLLM listing is unsupported (OpenRouter). A generic normalisation rule ensures all model IDs use `provider/model-name` format. Results are cached in memory with a configurable TTL.
 
-Favourites (`FAVOURITES` env var) enable shorthand resolution: passing `openai` to completion resolves to the configured OpenAI favourite.
+Favourites (`FAVOURITES` env var) enable shorthand resolution: passing `openai` to completion resolves to the configured OpenAI favourite. When `FAVOURITES` is not set, favourites are bootstrapped from the PSV model catalog (see below).
+
+### Model Catalog (PSV)
+
+`src/ask_another/models.psv` ships with the package as the default model catalog. It's a pipe-separated file produced by the `/research-models` skill (canonical source: `docs/models.psv`). The catalog provides:
+
+- **Favourite bootstrapping**: when `FAVOURITES` env var is empty, models marked `favourite=yes` in the PSV are used
+- **Descriptions in instructions**: server instructions show `model_id — description` for each favourite, helping the LLM client choose
+- **Enriched search**: `search_models(favourites_only=True)` includes descriptions
+
+Override the PSV path with the `MODELS_PSV` env var (useful for development: point at `docs/models.psv` directly). If the file is missing, the server degrades gracefully — no favourites, no descriptions.
 
 The entrypoint is `ask_another.server:main` (defined in `pyproject.toml` `[project.scripts]`), which calls `mcp.run()` on the FastMCP instance.
 
