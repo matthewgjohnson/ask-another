@@ -60,6 +60,10 @@ FAVOURITES="openai/gpt-5.2-pro,gemini/gemini-3-pro-preview,openrouter/deepseek/d
 
 With this config, passing `openai` to completion resolves to `openai/gpt-5.2-pro`. For OpenRouter, use the family prefix: `openrouter/deepseek` resolves to `openrouter/deepseek/deepseek-r1-0528`.
 
+### Zero Data Retention
+
+ZDR filtering is **on by default** — OpenRouter model discovery only returns models that support zero data retention. Set `ZERO_DATA_RETENTION` to `false` to disable this and list all models.
+
 ### Cache TTL
 
 `CACHE_TTL` sets model list cache duration in minutes. Defaults to 360 (6 hours).
@@ -68,17 +72,15 @@ With this config, passing `openai` to completion resolves to `openai/gpt-5.2-pro
 
 ### search_families
 
-Search model families -- the recommended first discovery call.
+Browse available provider groupings.
 
 - `search` (optional): Substring filter on family names
-- `favourites_only` (optional): Return only families with favourites
 
 ### search_models
 
-Search for specific model identifiers.
+Search for specific model identifiers. Results include descriptions from the model catalog when available.
 
 - `search` (optional): Substring filter on model identifiers
-- `favourites_only` (optional): Return only favourites
 
 ### completion
 

@@ -6,7 +6,7 @@ openrouter/anthropic/claude-sonnet-4.6|200000||3.00|15.00|51||79.6|89.9|no|Anthr
 openrouter/z-ai/glm-5|200000|66|1.00|3.20|50|1451|77.8|86.0|yes|#1 open-weight, 745B MoE MIT license, lowest hallucination, trained on Huawei Ascend
 openrouter/moonshotai/kimi-k2.5|262000|42|0.60|3.00|47|1447|76.8|87.6|no|1T MoE (32B active), agent swarm (100 sub-agents), vision-to-code, open-weight
 openrouter/qwen/qwen3.5-397b-a17b|262000|85|0.60|3.60|45||76.4|88.4|no|397B MoE (17B active), Apache 2.0, native vision, 201 languages, 91.3% AIME26
-openrouter/x-ai/grok-4|256000|42|3.00|15.00|42|1495|80.8|83.3|yes|Arena #4, #3 creative writing, 50.7% HLE (highest), unconstrained style
+openrouter/x-ai/grok-4|256000|42|3.00|15.00|42|1495|80.8|83.3|no|Arena #4, #3 creative writing, 50.7% HLE (highest), unconstrained style
 openrouter/minimax/minimax-m2.5|200000|50|0.15|1.20|42|1421|80.2|62.0|no|229B MoE, SWE-bench 80.2% at 1/20th Opus cost, Lightning 100 tok/s, open-weights
 openrouter/bytedance-seed/seed-2.0-mini|131072|||0.10|0.40|36|1470|||no|Arena #10 (1470 Elo), ultra-cheap, Pro variant SWE-bench 76.5%
 openrouter/deepseek/deepseek-r1-0528|128000||0.55|2.19|27||57.6|81.0|yes|Best open-source reasoning, MIT, 87.5% AIME, transparent chain-of-thought

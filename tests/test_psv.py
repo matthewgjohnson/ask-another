@@ -103,17 +103,79 @@ def test_build_instructions_includes_descriptions(tmp_path: Path, monkeypatch: o
     assert "openai/test-coder — Best for coding tasks" in instructions
 
 
-def test_search_models_favourites_includes_descriptions(tmp_path: Path, monkeypatch: object):
-    """search_models with favourites_only=True includes descriptions."""
+def test_search_models_includes_descriptions(tmp_path: Path, monkeypatch: object):
+    """search_models enriches results with descriptions from the PSV catalog."""
     psv_file = _write_psv(tmp_path)
     monkeypatch.setenv("MODELS_PSV", str(psv_file))
     monkeypatch.delenv("FAVOURITES", raising=False)
     monkeypatch.setenv("PROVIDER_TEST", "openai;sk-test")
 
     server._load_config()
-    result = server.search_models(favourites_only=True)
+    monkeypatch.setattr(
+        server, "_get_models",
+        lambda provider=None, *, zdr=None: [
+            "gemini/gemini-test",
+            "openrouter/test/model-a",
+            "openai/test-coder",
+        ],
+    )
+    result = server.search_models()
 
+    # Favourite with description
     assert "gemini/gemini-test — Top model, best quality" in result
+    # Non-favourite with description
+    assert "openrouter/test/model-a — Good open-weight model" in result
+    # Favourite with description
     assert "openai/test-coder — Best for coding tasks" in result
-    # Non-favourite should not appear
-    assert "openrouter/test/model-a" not in result
+
+
+def test_search_models_bare_ids_without_psv(tmp_path: Path, monkeypatch: object):
+    """Models not in the PSV catalog appear as bare IDs without descriptions."""
+    psv_file = _write_psv(tmp_path)
+    monkeypatch.setenv("MODELS_PSV", str(psv_file))
+    monkeypatch.delenv("FAVOURITES", raising=False)
+    monkeypatch.setenv("PROVIDER_TEST", "openai;sk-test")
+
+    server._load_config()
+    monkeypatch.setattr(
+        server, "_get_models",
+        lambda provider=None, *, zdr=None: ["openai/unknown-model", "openai/test-coder"],
+    )
+    result = server.search_models()
+
+    assert "openai/unknown-model" in result
+    assert "openai/unknown-model —" not in result
+    assert "openai/test-coder — Best for coding tasks" in result
+
+
+def test_zero_data_retention_flag(monkeypatch: object):
+    """ZERO_DATA_RETENTION env var sets the _zero_data_retention global."""
+    monkeypatch.setenv("PROVIDER_TEST", "openai;sk-test")
+    monkeypatch.delenv("FAVOURITES", raising=False)
+    monkeypatch.setenv("ZERO_DATA_RETENTION", "true")
+
+    server._load_config()
+
+    assert server._zero_data_retention is True
+
+
+def test_zero_data_retention_default(monkeypatch: object):
+    """ZERO_DATA_RETENTION defaults to True when not set."""
+    monkeypatch.setenv("PROVIDER_TEST", "openai;sk-test")
+    monkeypatch.delenv("FAVOURITES", raising=False)
+    monkeypatch.delenv("ZERO_DATA_RETENTION", raising=False)
+
+    server._load_config()
+
+    assert server._zero_data_retention is True
+
+
+def test_zero_data_retention_opt_out(monkeypatch: object):
+    """ZERO_DATA_RETENTION can be explicitly disabled."""
+    monkeypatch.setenv("PROVIDER_TEST", "openai;sk-test")
+    monkeypatch.delenv("FAVOURITES", raising=False)
+    monkeypatch.setenv("ZERO_DATA_RETENTION", "false")
+
+    server._load_config()
+
+    assert server._zero_data_retention is False

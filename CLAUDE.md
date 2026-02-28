@@ -23,8 +23,8 @@ uv run --with pytest python -m pytest tests/ -v
 
 The entire server lives in a single file: `src/ask_another/server.py`. It exposes these MCP tools:
 
-- **`search_families`** — discovers model families across configured providers, with optional substring search and favourites filter
-- **`search_models`** — finds specific model identifiers, with optional substring search and favourites filter
+- **`search_families`** — discovers model families across configured providers, with optional substring search
+- **`search_models`** — finds specific model identifiers with optional substring search; enriches results with descriptions from the PSV model catalog
 - **`feedback`** — collects usability issues from the LLM client into a JSONL log file (`~/.ask-another-feedback.jsonl` by default, configurable via `FEEDBACK_LOG` env var)
 - **`completion`** — proxies a completion request to a specified LLM via LiteLLM, supports full model identifiers or favourite shorthand
 - **`start_research`** — starts a deep research task that runs in the background via a lifespan task group. Supports two paths: OpenRouter (Perplexity/OpenAI via `litellm.completion`) and Gemini deep research (via `litellm.interactions.create` with polling). Blocks until results arrive or timeout, then returns results or a job handle. If interrupted (user hits escape), the research continues in the background.
@@ -43,7 +43,7 @@ Favourites (`FAVOURITES` env var) enable shorthand resolution: passing `openai` 
 
 - **Favourite bootstrapping**: when `FAVOURITES` env var is empty, models marked `favourite=yes` in the PSV are used
 - **Descriptions in instructions**: server instructions show `model_id — description` for each favourite, helping the LLM client choose
-- **Enriched search**: `search_models(favourites_only=True)` includes descriptions
+- **Enriched search**: `search_models` includes descriptions from the catalog for every matching model
 
 Override the PSV path with the `MODELS_PSV` env var (useful for development: point at `docs/models.psv` directly). If the file is missing, the server degrades gracefully — no favourites, no descriptions.
 

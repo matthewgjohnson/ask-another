@@ -9,7 +9,6 @@ import os
 import re
 import time
 import urllib.request
-from collections.abc import Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -32,6 +31,9 @@ _model_cache: dict[str, tuple[list[str], float]] = {}
 
 # Cache TTL in seconds (default 6 hours)
 _cache_ttl: int = 21600
+
+# Whether to filter OpenRouter models to ZDR-compatible only (default: on)
+_zero_data_retention: bool = True
 
 
 @dataclass(frozen=True)
@@ -197,7 +199,7 @@ def _load_psv() -> dict[str, ModelMeta]:
 
 def _load_config() -> None:
     """Scan environment and populate provider registry, favourites, and cache TTL."""
-    global _provider_registry, _favourites, _cache_ttl, _model_catalog
+    global _provider_registry, _favourites, _cache_ttl, _model_catalog, _zero_data_retention
 
     _provider_registry = {}
     provider_pattern = re.compile(r"^PROVIDER_\w+$")
@@ -218,6 +220,12 @@ def _load_config() -> None:
 
     _model_catalog = _load_psv()
 
+    zdr_val = os.environ.get("ZERO_DATA_RETENTION", "").lower()
+    if zdr_val:
+        _zero_data_retention = zdr_val in ("1", "true", "yes")
+    else:
+        _zero_data_retention = True
+
     # Bootstrap favourites from PSV if FAVOURITES env var is empty
     if not _favourites and _model_catalog:
         _favourites = [
@@ -237,8 +245,32 @@ def _normalise_model_id(model_id: str, provider: str) -> str:
     return model_id
 
 
-def _fetch_openrouter_models(api_key: str) -> list[str]:
-    """Fetch models from OpenRouter's API directly."""
+def _fetch_openrouter_models(api_key: str, *, zdr: bool = False) -> list[str]:
+    """Fetch models from OpenRouter's API directly.
+
+    When zdr is True, fetches from the ZDR endpoint which returns only
+    models compatible with Zero Data Retention.
+    """
+    if zdr:
+        req = urllib.request.Request(
+            "https://openrouter.ai/api/v1/endpoints/zdr",
+            headers={
+                "Accept": "application/json",
+                "Authorization": f"Bearer {api_key}",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            data = json.loads(resp.read())
+        # ZDR endpoint returns endpoints with model_id; deduplicate
+        seen: set[str] = set()
+        models: list[str] = []
+        for endpoint in data.get("data", []):
+            model_id = endpoint.get("model_id", "")
+            if model_id and model_id not in seen:
+                seen.add(model_id)
+                models.append(f"openrouter/{model_id}")
+        return models
+
     req = urllib.request.Request(
         "https://openrouter.ai/api/v1/models",
         headers={"Accept": "application/json"},
@@ -248,16 +280,10 @@ def _fetch_openrouter_models(api_key: str) -> list[str]:
     return [f"openrouter/{m['id']}" for m in data.get("data", [])]
 
 
-# Providers where LiteLLM listing does not work
-_LISTING_EXCEPTIONS: dict[str, Callable[[str], list[str]]] = {
-    "openrouter": _fetch_openrouter_models,
-}
-
-
-def _fetch_models(provider: str, api_key: str) -> list[str]:
+def _fetch_models(provider: str, api_key: str, *, zdr: bool = False) -> list[str]:
     """Fetch the model list for a provider."""
-    if provider in _LISTING_EXCEPTIONS:
-        return _LISTING_EXCEPTIONS[provider](api_key)
+    if provider == "openrouter":
+        return _fetch_openrouter_models(api_key, zdr=zdr)
 
     import litellm
 
@@ -273,8 +299,14 @@ def _fetch_models(provider: str, api_key: str) -> list[str]:
     return [_normalise_model_id(m, provider) for m in models]
 
 
-def _get_models(provider: str | None = None) -> list[str]:
-    """Get models, serving from cache when possible."""
+def _get_models(provider: str | None = None, *, zdr: bool | None = None) -> list[str]:
+    """Get models, serving from cache when possible.
+
+    Args:
+        provider: Limit to a single provider. None = all providers.
+        zdr: Override ZDR filtering for OpenRouter. None = use global default.
+    """
+    effective_zdr = zdr if zdr is not None else _zero_data_retention
     now = time.time()
     providers = [provider] if provider else list(_provider_registry.keys())
     all_models: list[str] = []
@@ -283,16 +315,18 @@ def _get_models(provider: str | None = None) -> list[str]:
         if p not in _provider_registry:
             continue
 
-        if p in _model_cache:
-            cached_models, cached_at = _model_cache[p]
+        cache_key = f"{p}:zdr={effective_zdr}" if p == "openrouter" else p
+
+        if cache_key in _model_cache:
+            cached_models, cached_at = _model_cache[cache_key]
             if now - cached_at < _cache_ttl:
                 all_models.extend(cached_models)
                 continue
 
         try:
-            models = _fetch_models(p, _provider_registry[p])
+            models = _fetch_models(p, _provider_registry[p], zdr=effective_zdr)
             if models:
-                _model_cache[p] = (models, now)
+                _model_cache[cache_key] = (models, now)
                 all_models.extend(models)
         except Exception:
             pass
@@ -354,8 +388,9 @@ def _build_instructions() -> str:
         "  - Ask another LLM for a second opinion.",
         "  - Provide access to other models through litellm.",
         "Howto:",
-        "  - For a quick query, use completion with a favourite model (see below).",
-        "  - To use another model: search_families → search_models → completion.",
+        "  - For a quick query, use completion with a favourite shorthand (see below).",
+        "  - To find any model, use search_models — results include descriptions",
+        "    from the model catalog when available.",
         "  - For deep research tasks, use start_research. If it is interrupted or",
         "    times out, the task continues in the background — use check_research",
         "    to retrieve results later, or cancel_research to stop a running task.",
@@ -381,6 +416,17 @@ def _build_instructions() -> str:
 mcp = FastMCP("ask-another", instructions=_build_instructions(), lifespan=_lifespan)
 
 
+def _zdr_warning(zdr: bool | None, result: str) -> str:
+    """Prepend a warning if the caller is overriding the configured ZDR policy."""
+    if zdr is None:
+        return result
+    if zdr == _zero_data_retention:
+        return result
+    if zdr:
+        return f"⚠️ ZDR filter enabled (overriding server default of off).\n\n{result}"
+    return f"⚠️ ZDR filter disabled (overriding server default of on). Some models listed may reject requests due to your provider's data retention policy.\n\n{result}"
+
+
 # ---------------------------------------------------------------------------
 # Tools
 # ---------------------------------------------------------------------------
@@ -389,7 +435,7 @@ mcp = FastMCP("ask-another", instructions=_build_instructions(), lifespan=_lifes
 @mcp.tool()
 def search_families(
     search: str | None = None,
-    favourites_only: bool = False,
+    zdr: bool | None = None,
 ) -> str:
     """Browse available provider groupings (e.g. 'openai', 'openrouter/deepseek').
     Use this to explore what's available before drilling into specific models
@@ -397,51 +443,48 @@ def search_families(
 
     Args:
         search: Substring filter applied to family names
-        favourites_only: Return only families containing favourite models
+        zdr: Filter OpenRouter models to ZDR-compatible only. Defaults to
+             the server's ZERO_DATA_RETENTION setting. Set explicitly to
+             override.
     """
-    if favourites_only:
-        families = sorted(set(_get_family(f) for f in _favourites))
-    else:
-        all_models = _get_models()
-        families = sorted(set(_get_family(m) for m in all_models))
+    all_models = _get_models(zdr=zdr)
+    families = sorted(set(_get_family(m) for m in all_models))
 
     if search:
         families = [f for f in families if search.lower() in f.lower()]
 
-    return "\n".join(families)
+    result = "\n".join(families)
+    return _zdr_warning(zdr, result)
 
 
 @mcp.tool()
 def search_models(
     search: str | None = None,
-    favourites_only: bool = False,
+    zdr: bool | None = None,
 ) -> str:
     """Find exact model identifiers. Always call this to verify a model ID
     before passing it to completion or start_research — do not guess IDs.
 
     Args:
         search: Substring filter applied to full model identifiers
-        favourites_only: Return only favourite models
+        zdr: Filter OpenRouter models to ZDR-compatible only. Defaults to
+             the server's ZERO_DATA_RETENTION setting. Set explicitly to
+             override.
     """
-    if favourites_only:
-        models = list(_favourites)
-    else:
-        models = _get_models()
+    models = _get_models(zdr=zdr)
 
     if search:
         models = [m for m in models if search.lower() in m.lower()]
 
-    if favourites_only:
-        lines = []
-        for m in models:
-            meta = _model_catalog.get(m)
-            if meta and meta.description:
-                lines.append(f"{m} — {meta.description}")
-            else:
-                lines.append(m)
-        return "\n".join(lines)
-
-    return "\n".join(models)
+    lines = []
+    for m in models:
+        meta = _model_catalog.get(m)
+        if meta and meta.description:
+            lines.append(f"{m} — {meta.description}")
+        else:
+            lines.append(m)
+    result = "\n".join(lines)
+    return _zdr_warning(zdr, result)
 
 
 @mcp.tool(
