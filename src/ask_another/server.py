@@ -31,7 +31,7 @@ _favourites: list[str] = []
 _model_cache: dict[str, tuple[list[str], float]] = {}
 
 # Cache TTL in seconds (default 6 hours)
-_cache_ttl: int = 21600
+_cache_ttl_minutes: int = 360
 
 # Whether to filter OpenRouter models to ZDR-compatible only (default: on)
 _zero_data_retention: bool = True
@@ -238,7 +238,7 @@ def _configure_logging() -> None:
 
 def _load_config() -> None:
     """Scan environment and populate provider registry, favourites, and cache TTL."""
-    global _provider_registry, _favourites, _cache_ttl, _model_catalog, _zero_data_retention
+    global _provider_registry, _favourites, _cache_ttl_minutes, _model_catalog, _zero_data_retention
 
     _configure_logging()
 
@@ -253,11 +253,11 @@ def _load_config() -> None:
     favourites_str = os.environ.get("FAVOURITES", "")
     _favourites = _parse_favourites(favourites_str)
 
-    ttl_str = os.environ.get("CACHE_TTL", "360")
+    ttl_str = os.environ.get("CACHE_TTL_MINUTES", "360")
     try:
-        _cache_ttl = int(ttl_str) * 60
+        _cache_ttl_minutes = int(ttl_str)
     except ValueError:
-        raise ValueError(f"Invalid CACHE_TTL value: {ttl_str}")
+        raise ValueError(f"Invalid CACHE_TTL_MINUTES value: {ttl_str}")
 
     _model_catalog = _load_psv()
 
@@ -275,9 +275,9 @@ def _load_config() -> None:
 
     logger.info(
         "Config loaded: %d providers, %d favourites, %d catalog entries, "
-        "ZDR=%s, cache_ttl=%ds",
+        "ZDR=%s, cache_ttl=%dm",
         len(_provider_registry), len(_favourites), len(_model_catalog),
-        _zero_data_retention, _cache_ttl,
+        _zero_data_retention, _cache_ttl_minutes,
     )
 
 
@@ -371,7 +371,7 @@ def _get_models(provider: str | None = None, *, zdr: bool | None = None) -> list
 
         if cache_key in _model_cache:
             cached_models, cached_at = _model_cache[cache_key]
-            if now - cached_at < _cache_ttl:
+            if now - cached_at < _cache_ttl_minutes * 60:
                 logger.debug("Cache hit for %s (%d models)", cache_key, len(cached_models))
                 all_models.extend(cached_models)
                 continue
