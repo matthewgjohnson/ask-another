@@ -1,53 +1,20 @@
 model|context|tok_sec|price_in|price_out|aa_index|arena_elo|swe_bench|gpqa|favourite|description
-gemini/gemini-3.1-pro-preview|1000000|91|2.00|12.00|57|1500|80.6|94.3|yes|AA #1, ARC-AGI-2 77.1%, best price-to-quality at the frontier, 1M context, multimodal
-openai/gpt-5.3-codex|200000|99|1.75|14.00|54||80.0|85.4|yes|AA #2, Terminal-Bench SOTA 77.3%, fastest frontier at 99 tok/s, Spark variant 1000+ tok/s
-openrouter/anthropic/claude-opus-4.6|200000|72|5.00|25.00|53|1503|80.8|91.3|no|Arena #1 (1503), GDPval 1606, best coding and creative writing, 1M context beta
-openrouter/anthropic/claude-sonnet-4.6|200000||3.00|15.00|51||79.6|89.9|no|Anthropic mid-range, 70% preferred over Sonnet 4.5, 1M context beta, strong coding
-openrouter/z-ai/glm-5|200000|66|1.00|3.20|50|1451|77.8|86.0|yes|#1 open-weight, 745B MoE MIT license, lowest hallucination, trained on Huawei Ascend
-openrouter/moonshotai/kimi-k2.5|262000|42|0.60|3.00|47|1447|76.8|87.6|no|1T MoE (32B active), agent swarm (100 sub-agents), vision-to-code, open-weight
-openrouter/qwen/qwen3.5-397b-a17b|262000|85|0.60|3.60|45||76.4|88.4|no|397B MoE (17B active), Apache 2.0, native vision, 201 languages, 91.3% AIME26
-openrouter/x-ai/grok-4|256000|42|3.00|15.00|42|1495|80.8|83.3|no|Arena #4, #3 creative writing, 50.7% HLE (highest), unconstrained style
-openrouter/minimax/minimax-m2.5|200000|50|0.15|1.20|42|1421|80.2|62.0|no|229B MoE, SWE-bench 80.2% at 1/20th Opus cost, Lightning 100 tok/s, open-weights
-openrouter/bytedance-seed/seed-2.0-mini|131072|||0.10|0.40|36|1470|||no|Arena #10 (1470 Elo), ultra-cheap, Pro variant SWE-bench 76.5%
-openrouter/deepseek/deepseek-r1-0528|128000||0.55|2.19|27||57.6|81.0|yes|Best open-source reasoning, MIT, 87.5% AIME, transparent chain-of-thought
-gemini/gemini-2.5-flash|1000000|249|0.30|2.50|21||||no|Speed champion 249 tok/s, 1M context, multimodal, best for high-volume fast tasks
-gemini/gemini-3-pro-preview|1000000|||1.25|10.00||1486||91.9|no|Predecessor to 3.1 Pro, Arena #5 (1486 Elo), strong multimodal
-gemini/gemini-3-flash-preview|1000000|||||1473|||no|Arena #7 for a Flash model, good speed-intelligence balance
-openai/gpt-5.2-pro|400000|89|21.00|168.00||1481|80.0|93.2|no|100% AIME 2025, highest GPQA (93.2%), 12x cost of standard GPT-5.2
-openai/gpt-5.2|400000||1.75|14.00||1481|||no|Standard GPT-5.2, much cheaper than Pro, sensible OpenAI default
-openrouter/anthropic/claude-opus-4.5|200000||5.00|25.00|||80.9|87.0|no|Previous Opus gen (Nov 2025), SWE-bench 80.9% (highest self-reported)
-openrouter/deepseek/deepseek-v3.2|128000|45|0.28|0.42||1421|73.1||no|685B MoE, MIT, gold IMO 2025, $0.28/$0.42, better than R1 for pure coding
-openrouter/z-ai/glm-4.7|200000||0.10|0.10||1445|||no|Arena 1445, $0.10/$0.10, 95.7% AIME, essentially free frontier-adjacent coding
-openrouter/z-ai/glm-4.6|200000||||||||||Previous GLM gen, strong for basic tasks at extremely low cost
-openrouter/z-ai/glm-4.5|200000||||||||||Older GLM, free Flash variant available
-openai/o3|200000||10.00|40.00|||||no|OpenAI dedicated reasoning, largely superseded by GPT-5.2 Pro
-openai/o4-mini|128000||1.10|4.40|||||no|Compact reasoning, good speed-to-reasoning tradeoff for cost-sensitive tasks
-openrouter/deepseek/deepseek-v3.2-speciale|128000||||||||||High-compute V3.2, gold IMO 2025 (35/42), extremely verbose, competition math only
-openrouter/deepseek/deepseek-chat-v3.1|128000||||||||||Previous DeepSeek gen, #6 OpenRouter usage (free tier), solid general-purpose
-openrouter/deepseek/deepseek-r1|128000||||||||||Original R1 (Jan 2025), 70% AIME, superseded by R1-0528
-openrouter/qwen/qwen3-coder|131072||||||||||Alibaba dedicated coding model, multiple size variants including free tier
-openrouter/qwen/qwen3-max-thinking|131072||||||||||Qwen frontier reasoning, MoE, strong on Artificial Analysis
-openrouter/qwen/qwq-32b|131072||||||||||Compact 32B reasoning, good for local deployment on consumer GPUs
-openrouter/meta-llama/llama-4-maverick|1048576||||||||||Meta open MoE, strong multilingual, free on OpenRouter
-openrouter/meta-llama/llama-4-scout|10000000||||||||||Smaller Llama 4, 10M token context (largest available)
-openrouter/meta-llama/llama-3.3-70b-instruct|131072||||||||||Previous gen, battle-tested, free on OpenRouter
-openrouter/mistralai/mistral-large-2512|131072||||||||||Mistral flagship (Jan 2026), strong European alternative, good multilingual
-openrouter/mistralai/devstral-medium|131072||||||||||Mistral dedicated coding model, competitive at lower cost
-openrouter/moonshotai/kimi-k2-thinking|131072||||||||||Kimi K2 with extended thinking, predecessor to K2.5
-openrouter/baidu/ernie-4.5-300b-a47b|131072||||||||||Baidu flagship, strong Chinese-language, Arena #18 via Ernie 5.0
-openrouter/tencent/hunyuan-a13b-instruct|131072||||||||||Tencent compact MoE, budget Chinese-language tasks
-openrouter/perplexity/sonar-deep-research|128000||||||||||Not a general LLM, web research tool, cited reports, ~$1/query
-openrouter/perplexity/sonar-pro|128000||||||||||Search-augmented model, good for current information
-openrouter/amazon/nova-premier-v1|128000||||||||||Amazon flagship, competitive Bedrock pricing, AWS-integrated
-openrouter/cohere/command-a|128000||||||||||Cohere latest, strong RAG and enterprise search
-openrouter/writer/palmyra-x5|131072||||||||||Writer enterprise model, business writing and content
-openrouter/inception/mercury|131072||||||||||Speed-optimized, among fastest available models
-openrouter/nvidia/llama-3.3-nemotron-super-49b-v1.5|131072||||||||||NVIDIA fine-tuned Llama, optimized for NVIDIA hardware
-openrouter/google/gemma-3-27b-it|131072||||||||||Google open model, free on OpenRouter, good for basic tasks
-openrouter/openai/gpt-oss-120b|131072||||||||||OpenAI first open-weight, MMLU 90.0, GPQA 80.9%, free on OpenRouter
-openrouter/x-ai/grok-4.1-fast|256000||||||||||Speed-optimized Grok 4 variant, faster inference
-openrouter/x-ai/grok-4-fast|256000||||||||||Grok 4 Fast variant
-openrouter/x-ai/grok-3|131072||||||||||Previous xAI gen, still capable and cheaper than Grok 4
-gemini/gemini-2.5-pro|1000000||1.25|10.00|||||no|Previous Pro gen, pioneered thinking budgets, 1M context, well-documented
-gemini/gemini-2.5-flash-lite|1000000|496|0.10|0.40|||||no|Ultra-cheap 496 tok/s, best for classification and extraction at scale
-gemini/gemini-2.0-flash|1000000|||||||||no|Older Flash, #5 OpenRouter by usage, reliable for simple tasks
+gemini/gemini-3.1-pro-preview|1000000|91|2.00|12.00|57|1500|80.6|94.3|yes|Google's frontier reasoning model, AA #1, ARC-AGI-2 77.1%, best price-to-quality at the frontier, 1M context, multimodal-native
+openai/gpt-5.2|200000|98|1.75|14.00|51|1486|80.0|92.4|yes|OpenAI current-gen workhorse, 100% AIME (Pro), fastest frontier at 98 tok/s, RLHF-heavy assertive reasoning style
+openrouter/z-ai/glm-5|128000|70|0.80|2.56|50|1451|77.8|86.0|yes|#1 open-weight, 745B MoE MIT license, lowest hallucination, trained on Huawei Ascend, maximally independent
+openrouter/deepseek/deepseek-v3.2|128000|39|0.028|0.42|66|1480|74.0|81.0|yes|685B MoE MIT, gold IMO 2025, transparent RL reasoning chains, absurd value at 1/50th frontier cost
+openrouter/moonshotai/kimi-k2.5|131072|42|0.60|3.00|47|1309|76.8|87.6|yes|1T MoE with 100-agent swarm, structurally novel parallel decomposition, vision-to-code, open-weight
+openai/gpt-5.3-codex|200000|99|1.75|14.00|54||77.3||no|AA #2, Terminal-Bench SOTA 77.3%, fastest frontier, Spark variant 1000+ tok/s, dedicated coding
+openai/gpt-5.2-pro|200000|98|21.00|84.00||1534||93.2|no|100% AIME 2025, highest GPQA 93.2%, 12x cost of standard GPT-5.2, maximum reasoning depth
+openrouter/anthropic/claude-opus-4.6|200000|72|5.00|25.00|53|1503|80.8|91.3|no|Arena #1 (1503 Elo), best coding and creative writing by human preference, 1M context beta
+openrouter/anthropic/claude-sonnet-4.6|200000|80|1.50|7.50||1475||88.0|no|70% preferred over Sonnet 4.5, 1M context beta, strong coding, best mid-range Anthropic
+openrouter/minimax/minimax-m2.5|1000000|100|0.15|1.20|42||80.2|62.0|no|229B MoE open-weights, SWE-bench 80.2% at 1/20th Opus cost, Lightning 100 tok/s, narrow GPQA suggests coding-optimised
+openrouter/qwen/qwen3.5-397b-a17b|131072|28|0.40|1.20|45||76.4|88.4|no|397B MoE (17B active), Apache 2.0, 91.3% AIME 2026, 201 languages, correlated with DeepSeek approach
+openrouter/bytedance-seed/seed-2.0-mini|256000||0.10|0.40||1470|67.9||no|ByteDance cost leader, 256K context, four reasoning modes, 62% hallucination accuracy limits thinking partnership
+openrouter/baidu/ernie-4.5-300b-a47b|128000|32|0.84|3.37||1460||57.0|no|Baidu 2.4T ultra-sparse MoE, Arena #8 globally (Ernie 5.0), strong multimodal, instruction-following inconsistencies
+openrouter/deepseek/deepseek-r1-0528|128000|35|0.55|2.19||1444|87.5||no|Best open-source reasoning, MIT, 87.5% AIME, transparent chain-of-thought, superseded by V3.2 for general use
+openrouter/z-ai/glm-4.7|128000|85|0.10|0.10||1445||95.7|no|GLM-5's cheaper sibling, Arena 1445, 95.7% AIME, essentially free frontier-adjacent coding
+openrouter/meta-llama/llama-4-maverick|128000|75|0.20|0.60||||no|Meta open MoE, strong multilingual, free on OpenRouter, battle-tested ecosystem
+openrouter/meta-llama/llama-4-scout|10000000|60|0.15|0.40|||||no|10M token context (largest available), smaller model, unique for extreme context use cases
+openai/gpt-oss-120b|128000|55|0.00|0.00|||80.9||no|OpenAI first open-weight, MMLU 90.0, GPQA 80.9%, free on OpenRouter, strategic signal
+openrouter/google/gemma-3-27b-it|128000|90|0.00|0.00|||||no|Google open model, free on OpenRouter, good for basic tasks and fine-tuning
