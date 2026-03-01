@@ -54,7 +54,7 @@ File-based debug logging can be enabled via environment variables. When disabled
 | Var | Default | Notes |
 |-----|---------|-------|
 | `LOG_LEVEL` | (empty = disabled) | `DEBUG`, `INFO`, `WARNING`, `ERROR` |
-| `LOG_FILE` | `~/.ask-another-debug.log` | Path to log file |
+| `LOG_FILE` | `~/.ask-another.log` | Path to log file |
 | `LOG_FILE_SIZE` | `5` | Max file size in MB |
 | `LOG_FILE_COUNT` | `2` | Number of backup files to keep |
 

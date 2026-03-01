@@ -216,7 +216,7 @@ def _configure_logging() -> None:
         return
 
     log_file = os.path.expanduser(
-        os.environ.get("LOG_FILE", "~/.ask-another-debug.log")
+        os.environ.get("LOG_FILE", "~/.ask-another.log")
     )
     try:
         max_bytes = int(os.environ.get("LOG_FILE_SIZE", "5")) * 1024 * 1024
