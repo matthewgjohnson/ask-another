@@ -62,10 +62,6 @@ Uses `RotatingFileHandler` — files rotate at `LOG_FILE_SIZE` MB, keeping `LOG_
 
 The entrypoint is `ask_another.server:main` (defined in `pyproject.toml` `[project.scripts]`), which calls `mcp.run()` on the FastMCP instance.
 
-## TODO
-
-- **Add tests for research tools** — `start_research`, `check_research`, and `cancel_research` have no tests yet. Cover: happy path (job completes within timeout), timeout (job continues in background), cancellation, job listing table format, and the Gemini Interactions API path. Use `mcp.client.stdio.stdio_client` + `ClientSession` for integration tests (see `tests/test_feedback.py` for patterns). The Gemini path will need mocking since `litellm.interactions.create/get` requires a live API key.
-
 ## Key Dependencies
 
 - **mcp** (FastMCP) — MCP server framework
