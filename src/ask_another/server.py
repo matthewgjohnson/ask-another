@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import logging.handlers
 import json
 import os
 import re
@@ -197,9 +198,49 @@ def _load_psv() -> dict[str, ModelMeta]:
     return catalog
 
 
+def _configure_logging() -> None:
+    """Set up file-based debug logging if LOG_LEVEL is set.
+
+    Env vars:
+        LOG_LEVEL: DEBUG, INFO, WARNING, ERROR. Empty = disabled.
+        LOG_FILE: Path to log file (default: ~/.ask-another-debug.log).
+        LOG_FILE_SIZE: Max file size in MB (default: 5).
+        LOG_FILE_COUNT: Number of backup files (default: 2).
+    """
+    level_str = os.environ.get("LOG_LEVEL", "").strip().upper()
+    if not level_str:
+        return
+
+    level = getattr(logging, level_str, None)
+    if level is None:
+        return
+
+    log_file = os.path.expanduser(
+        os.environ.get("LOG_FILE", "~/.ask-another-debug.log")
+    )
+    try:
+        max_bytes = int(os.environ.get("LOG_FILE_SIZE", "5")) * 1024 * 1024
+    except ValueError:
+        max_bytes = 5 * 1024 * 1024
+    try:
+        backup_count = int(os.environ.get("LOG_FILE_COUNT", "2"))
+    except ValueError:
+        backup_count = 2
+
+    handler = logging.handlers.RotatingFileHandler(
+        log_file, maxBytes=max_bytes, backupCount=backup_count
+    )
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+    logger.addHandler(handler)
+    logger.setLevel(level)
+    logger.info("ask-another logging started (level=%s, file=%s)", level_str, log_file)
+
+
 def _load_config() -> None:
     """Scan environment and populate provider registry, favourites, and cache TTL."""
     global _provider_registry, _favourites, _cache_ttl, _model_catalog, _zero_data_retention
+
+    _configure_logging()
 
     _provider_registry = {}
     provider_pattern = re.compile(r"^PROVIDER_\w+$")
@@ -231,6 +272,13 @@ def _load_config() -> None:
         _favourites = [
             meta.model_id for meta in _model_catalog.values() if meta.favourite
         ]
+
+    logger.info(
+        "Config loaded: %d providers, %d favourites, %d catalog entries, "
+        "ZDR=%s, cache_ttl=%ds",
+        len(_provider_registry), len(_favourites), len(_model_catalog),
+        _zero_data_retention, _cache_ttl,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -269,6 +317,7 @@ def _fetch_openrouter_models(api_key: str, *, zdr: bool = False) -> list[str]:
             if model_id and model_id not in seen:
                 seen.add(model_id)
                 models.append(f"openrouter/{model_id}")
+        logger.debug("OpenRouter ZDR endpoint returned %d models", len(models))
         return models
 
     req = urllib.request.Request(
@@ -277,7 +326,9 @@ def _fetch_openrouter_models(api_key: str, *, zdr: bool = False) -> list[str]:
     )
     with urllib.request.urlopen(req, timeout=60) as resp:
         data = json.loads(resp.read())
-    return [f"openrouter/{m['id']}" for m in data.get("data", [])]
+    models = [f"openrouter/{m['id']}" for m in data.get("data", [])]
+    logger.debug("OpenRouter models endpoint returned %d models", len(models))
+    return models
 
 
 def _fetch_models(provider: str, api_key: str, *, zdr: bool = False) -> list[str]:
@@ -293,7 +344,8 @@ def _fetch_models(provider: str, api_key: str, *, zdr: bool = False) -> list[str
             custom_llm_provider=provider,
             api_key=api_key,
         )
-    except Exception:
+    except Exception as exc:
+        logger.warning("Failed to fetch models for %s: %s", provider, exc)
         return []
 
     return [_normalise_model_id(m, provider) for m in models]
@@ -320,6 +372,7 @@ def _get_models(provider: str | None = None, *, zdr: bool | None = None) -> list
         if cache_key in _model_cache:
             cached_models, cached_at = _model_cache[cache_key]
             if now - cached_at < _cache_ttl:
+                logger.debug("Cache hit for %s (%d models)", cache_key, len(cached_models))
                 all_models.extend(cached_models)
                 continue
 
@@ -328,8 +381,8 @@ def _get_models(provider: str | None = None, *, zdr: bool | None = None) -> list
             if models:
                 _model_cache[cache_key] = (models, now)
                 all_models.extend(models)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Model fetch failed for provider %s: %s", p, exc)
 
     return sorted(all_models)
 
@@ -353,6 +406,7 @@ def _resolve_model(model: str) -> tuple[str, str]:
         fav = matches[0]
         for provider, api_key in _provider_registry.items():
             if fav.startswith(f"{provider}/"):
+                logger.debug("Resolved shorthand '%s' -> %s (provider=%s)", model, fav, provider)
                 return fav, api_key
 
     if len(matches) > 1:
@@ -366,8 +420,10 @@ def _resolve_model(model: str) -> tuple[str, str]:
     if "/" in model:
         for provider, api_key in _provider_registry.items():
             if model.startswith(f"{provider}/"):
+                logger.debug("Resolved full model ID '%s' (provider=%s)", model, provider)
                 return model, api_key
 
+    logger.warning("Model resolution failed for '%s'", model)
     fav_list = ", ".join(_favourites) if _favourites else "(none configured)"
     raise ValueError(
         f"No favourite matches '{model}'. Available favourites: {fav_list}"
@@ -565,6 +621,7 @@ def completion(
             msg += f" Similar models: {', '.join(suggestions)}"
         msg += " Use search_models to find valid identifiers."
         msg += " If this seems like a bug, call the feedback tool to report it."
+        logger.warning("Model validation failed: %s (known: %d models)", full_model, len(known_models))
         raise ValueError(msg)
 
     messages = []
@@ -581,7 +638,9 @@ def completion(
     if temperature is not None:
         kwargs["temperature"] = temperature
 
+    logger.debug("Calling litellm.completion(model=%s)", full_model)
     response = litellm.completion(**kwargs)
+    logger.debug("Completion response received from %s", full_model)
 
     return response.choices[0].message.content
 
@@ -611,14 +670,17 @@ def _run_research_completion_sync(job: ResearchJob, api_key: str) -> None:
     if _is_openai_research(job.model):
         kwargs["tools"] = [{"type": "web_search_preview"}]
 
+    logger.info("Research job %d starting: model=%s", job.job_id, job.model)
     try:
         response = litellm.completion(**kwargs)
         job.result = response.choices[0].message.content
         job.citations = getattr(response, "citations", []) or []
         job.status = "completed"
+        logger.info("Research job %d completed", job.job_id)
     except Exception as exc:
         job.status = "failed"
         job.error = str(exc)
+        logger.warning("Research job %d failed: %s", job.job_id, exc)
     finally:
         job.ended = datetime.now(timezone.utc).strftime("%H:%M")
 
@@ -634,6 +696,7 @@ def _run_research_gemini_sync(job: ResearchJob, api_key: str) -> None:
 
     agent_name = job.model.split("/", 1)[1]  # strip "gemini/" prefix
 
+    logger.info("Gemini research job %d starting: agent=%s", job.job_id, agent_name)
     try:
         response = litellm.interactions.create(
             agent=agent_name,
@@ -642,6 +705,7 @@ def _run_research_gemini_sync(job: ResearchJob, api_key: str) -> None:
             api_key=api_key,
         )
         interaction_id = response.id
+        logger.debug("Gemini interaction created: id=%s", interaction_id)
 
         # Poll until complete or failed
         while True:
@@ -649,6 +713,7 @@ def _run_research_gemini_sync(job: ResearchJob, api_key: str) -> None:
                 interaction_id=interaction_id,
                 api_key=api_key,
             )
+            logger.debug("Gemini poll: status=%s", status_resp.status)
             if status_resp.status == "completed":
                 outputs = status_resp.outputs or []
                 if outputs:
@@ -660,10 +725,12 @@ def _run_research_gemini_sync(job: ResearchJob, api_key: str) -> None:
                         for a in (annotations or [])
                     ]
                 job.status = "completed"
+                logger.info("Gemini research job %d completed", job.job_id)
                 return
             elif status_resp.status in ("failed", "cancelled"):
                 job.status = "failed"
                 job.error = getattr(status_resp, "error", "Unknown error")
+                logger.warning("Gemini research job %d %s: %s", job.job_id, status_resp.status, job.error)
                 return
 
             time.sleep(10)
@@ -671,6 +738,7 @@ def _run_research_gemini_sync(job: ResearchJob, api_key: str) -> None:
     except Exception as exc:
         job.status = "failed"
         job.error = str(exc)
+        logger.warning("Gemini research job %d failed: %s", job.job_id, exc)
     finally:
         job.ended = datetime.now(timezone.utc).strftime("%H:%M")
 

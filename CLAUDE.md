@@ -47,6 +47,19 @@ Favourites (`FAVOURITES` env var) enable shorthand resolution: passing `openai` 
 
 Override the PSV path with the `MODELS_PSV` env var (useful for development: point at `docs/models.psv` directly). If the file is missing, the server degrades gracefully — no favourites, no descriptions.
 
+### Debug Logging
+
+File-based debug logging can be enabled via environment variables. When disabled (default), no handlers are attached and there is zero overhead.
+
+| Var | Default | Notes |
+|-----|---------|-------|
+| `LOG_LEVEL` | (empty = disabled) | `DEBUG`, `INFO`, `WARNING`, `ERROR` |
+| `LOG_FILE` | `~/.ask-another-debug.log` | Path to log file |
+| `LOG_FILE_SIZE` | `5` | Max file size in MB |
+| `LOG_FILE_COUNT` | `2` | Number of backup files to keep |
+
+Uses `RotatingFileHandler` — files rotate at `LOG_FILE_SIZE` MB, keeping `LOG_FILE_COUNT` backups (e.g. `.log`, `.log.1`, `.log.2`).
+
 The entrypoint is `ask_another.server:main` (defined in `pyproject.toml` `[project.scripts]`), which calls `mcp.run()` on the FastMCP instance.
 
 ## TODO
