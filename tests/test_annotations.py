@@ -53,7 +53,6 @@ def test_completion_tracks_usage(tmp_path, monkeypatch):
     ann_file.write_text("{}")
     monkeypatch.setenv("ANNOTATIONS_FILE", str(ann_file))
     monkeypatch.setenv("PROVIDER_TEST", "openai;sk-test")
-    monkeypatch.delenv("FAVOURITES", raising=False)
     server._load_config()
     server._annotations = server._load_annotations()
 
@@ -149,3 +148,33 @@ def test_resolve_model_shorthand_from_usage(monkeypatch):
     full_id, api_key = server._resolve_model("openai")
     assert full_id == "openai/gpt-5.2"
     assert api_key == "sk-test"
+
+
+def test_zero_data_retention_flag(monkeypatch):
+    """ZERO_DATA_RETENTION env var sets the _zero_data_retention global."""
+    monkeypatch.setenv("PROVIDER_TEST", "openai;sk-test")
+    monkeypatch.setenv("ZERO_DATA_RETENTION", "true")
+
+    server._load_config()
+
+    assert server._zero_data_retention is True
+
+
+def test_zero_data_retention_default(monkeypatch):
+    """ZERO_DATA_RETENTION defaults to True when not set."""
+    monkeypatch.setenv("PROVIDER_TEST", "openai;sk-test")
+    monkeypatch.delenv("ZERO_DATA_RETENTION", raising=False)
+
+    server._load_config()
+
+    assert server._zero_data_retention is True
+
+
+def test_zero_data_retention_opt_out(monkeypatch):
+    """ZERO_DATA_RETENTION can be explicitly disabled."""
+    monkeypatch.setenv("PROVIDER_TEST", "openai;sk-test")
+    monkeypatch.setenv("ZERO_DATA_RETENTION", "false")
+
+    server._load_config()
+
+    assert server._zero_data_retention is False

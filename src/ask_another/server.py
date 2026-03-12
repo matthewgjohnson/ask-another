@@ -95,9 +95,6 @@ def _get_recent_models(annotations: dict[str, dict], days: int = 7) -> list[tupl
 # Provider registry: {provider_name: api_key}
 _provider_registry: dict[str, str] = {}
 
-# Favourites: list of full model identifiers
-_favourites: list[str] = []
-
 # Cache: {provider_name: (model_ids, timestamp)}
 _model_cache: dict[str, tuple[list[str], float]] = {}
 
@@ -106,19 +103,6 @@ _cache_ttl_minutes: int = 360
 
 # Whether to filter OpenRouter models to ZDR-compatible only (default: on)
 _zero_data_retention: bool = True
-
-
-@dataclass(frozen=True)
-class ModelMeta:
-    """Metadata for a model from the PSV catalog."""
-
-    model_id: str
-    favourite: bool
-    description: str
-
-
-# Model catalog: {model_id: ModelMeta}
-_model_catalog: dict[str, ModelMeta] = {}
 
 # Feedback log path
 _feedback_log: Path = Path(
@@ -212,62 +196,6 @@ def _get_family(model_id: str) -> str:
     return model_id.rsplit("/", 1)[0]
 
 
-def _parse_favourites(value: str) -> list[str]:
-    """Parse the FAVOURITES environment variable.
-
-    Validates one favourite per family.
-    """
-    if not value.strip():
-        return []
-
-    favourites = [f.strip() for f in value.split(",") if f.strip()]
-
-    seen_families: dict[str, str] = {}
-    for fav in favourites:
-        family = _get_family(fav)
-        if family in seen_families:
-            raise ValueError(
-                f"Multiple favourites for family '{family}': "
-                f"'{seen_families[family]}' and '{fav}'"
-            )
-        seen_families[family] = fav
-
-    return favourites
-
-
-def _load_psv() -> dict[str, ModelMeta]:
-    """Load the model catalog from a PSV file.
-
-    Looks for the file at: MODELS_PSV env var, then next to this module.
-    Uses anchor-on-ends parsing: parts[0]=model_id, parts[-1]=description,
-    parts[-2]=favourite flag. Robust to column count changes.
-    """
-    psv_path_str = os.environ.get("MODELS_PSV", "")
-    if psv_path_str:
-        psv_path = Path(psv_path_str)
-    else:
-        psv_path = Path(__file__).parent / "models.psv"
-
-    if not psv_path.is_file():
-        logger.debug("No PSV catalog found at %s", psv_path)
-        return {}
-
-    catalog: dict[str, ModelMeta] = {}
-    for line in psv_path.read_text().splitlines():
-        line = line.strip()
-        if not line or line.startswith("model|"):
-            continue
-        parts = line.split("|")
-        if len(parts) < 3:
-            continue
-        model_id = parts[0]
-        description = parts[-1]
-        favourite = parts[-2].lower() == "yes" if len(parts) >= 2 else False
-        catalog[model_id] = ModelMeta(
-            model_id=model_id, favourite=favourite, description=description
-        )
-    return catalog
-
 
 def _configure_logging() -> None:
     """Set up file-based debug logging if LOG_LEVEL is set.
@@ -308,8 +236,8 @@ def _configure_logging() -> None:
 
 
 def _load_config() -> None:
-    """Scan environment and populate provider registry, favourites, and cache TTL."""
-    global _provider_registry, _favourites, _cache_ttl_minutes, _model_catalog, _zero_data_retention
+    """Scan environment and populate provider registry and cache TTL."""
+    global _provider_registry, _cache_ttl_minutes, _zero_data_retention, _annotations
 
     _configure_logging()
 
@@ -321,16 +249,11 @@ def _load_config() -> None:
             provider, api_key = _parse_provider_config(var_name, value)
             _provider_registry[provider] = api_key
 
-    favourites_str = os.environ.get("FAVOURITES", "")
-    _favourites = _parse_favourites(favourites_str)
-
     ttl_str = os.environ.get("CACHE_TTL_MINUTES", "360")
     try:
         _cache_ttl_minutes = int(ttl_str)
     except ValueError:
         raise ValueError(f"Invalid CACHE_TTL_MINUTES value: {ttl_str}")
-
-    _model_catalog = _load_psv()
 
     zdr_val = os.environ.get("ZERO_DATA_RETENTION", "").lower()
     if zdr_val:
@@ -338,16 +261,11 @@ def _load_config() -> None:
     else:
         _zero_data_retention = True
 
-    # Bootstrap favourites from PSV if FAVOURITES env var is empty
-    if not _favourites and _model_catalog:
-        _favourites = [
-            meta.model_id for meta in _model_catalog.values() if meta.favourite
-        ]
+    _annotations = _load_annotations()
 
     logger.info(
-        "Config loaded: %d providers, %d favourites, %d catalog entries, "
-        "ZDR=%s, cache_ttl=%dm",
-        len(_provider_registry), len(_favourites), len(_model_catalog),
+        "Config loaded: %d providers, %d annotations, ZDR=%s, cache_ttl=%dm",
+        len(_provider_registry), len(_annotations),
         _zero_data_retention, _cache_ttl_minutes,
     )
 
@@ -618,9 +536,18 @@ def search_models(
 
     lines = []
     for m in models:
-        meta = _model_catalog.get(m)
-        if meta and meta.description:
-            lines.append(f"{m} — {meta.description}")
+        entry = _annotations.get(m, {})
+        note = entry.get("annotations", {}).get("note", "")
+        meta = entry.get("metadata", {})
+        desc_parts = []
+        if meta.get("arena_elo"):
+            desc_parts.append(f"Elo {meta['arena_elo']}")
+        if meta.get("livebench_avg"):
+            desc_parts.append(f"LiveBench {meta['livebench_avg']}")
+        if note:
+            desc_parts.append(note)
+        if desc_parts:
+            lines.append(f"{m} — {', '.join(desc_parts)}")
         else:
             lines.append(m)
     result = "\n".join(lines)

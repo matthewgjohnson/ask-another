@@ -19,4 +19,4 @@ build-backend = "hatchling.build"
 packages = ["src/ask_another"]
 
 [tool.hatch.build]
-include = ["src/ask_another/**/*.py", "src/ask_another/**/*.psv"]
+include = ["src/ask_another/**/*.py"]
