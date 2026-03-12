@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import csv
 import io
 import logging
@@ -584,6 +585,9 @@ def _build_instructions() -> str:
         "  - For deep research tasks, use start_research. If it is interrupted or",
         "    times out, the task continues in the background — use check_research",
         "    to retrieve results later, or cancel_research to stop a running task.",
+        "  - To generate images, use generate_image with a model like",
+        "    openai/gpt-image-1 or gemini/gemini-2.5-flash-image.",
+        "    Images are displayed inline and saved to disk.",
         "  - Never guess model IDs.",
         "Feedback:",
         "  - We'd love to hear how ask-another is working for you. Call",
@@ -835,6 +839,121 @@ def completion(
     return response.choices[0].message.content
 
 
+@mcp.tool()
+def generate_image(
+    model: str,
+    prompt: str,
+    size: str | None = None,
+    quality: str | None = None,
+) -> list:
+    """Generate an image from a text prompt. The image is returned inline
+    and saved to disk (~/.Pictures/ask-another/ by default).
+
+    Two model types are supported — the tool picks the right path automatically:
+    - Dedicated image models (gpt-image-1, dall-e-3, imagen-4): best control
+      over size and quality.
+    - Native image-output models (gemini-*-image / "Nano Banana"): can
+      interleave text and images, good for diagrams or annotated visuals.
+
+    Args:
+        model: Model to use (e.g. 'openai/gpt-image-1',
+               'gemini/gemini-2.5-flash-image'). Use search_models with
+               'image' to find available image models.
+        prompt: Text description of the image to generate.
+        size: Image dimensions (e.g. '1024x1024', '1536x1024'). Only used
+              by dedicated image models. Omit to use the model's default.
+        quality: Image quality ('low', 'medium', 'high', 'hd', 'standard').
+                 Only used by dedicated image models. Omit for default.
+    """
+    import litellm
+
+    from mcp.types import ImageContent, TextContent
+
+    full_model, api_key = _resolve_model(model)
+
+    if _is_native_image_model(full_model):
+        # Completion path with image modalities (Nano Banana, etc.)
+        kwargs: dict = {
+            "model": full_model,
+            "messages": [{"role": "user", "content": prompt}],
+            "modalities": ["image", "text"],
+            "api_key": api_key,
+            "timeout": 120,
+        }
+        logger.debug(
+            "Calling litellm.completion(model=%s, modalities=[image,text])",
+            full_model,
+        )
+        response = litellm.completion(**kwargs)
+        logger.debug("Image completion response received from %s", full_model)
+
+        result_blocks: list = []
+
+        text = response.choices[0].message.content
+        if text:
+            result_blocks.append(TextContent(type="text", text=text))
+
+        images = getattr(response.choices[0].message, "images", None) or []
+        if not images:
+            raise ValueError(
+                f"Model {full_model} returned no images. "
+                "Try making the image request more explicit in your prompt."
+            )
+
+        for img_item in images:
+            url = img_item["image_url"]["url"]
+            b64_data, mime_type = _extract_image_b64(None, url)
+            filepath = _save_image(b64_data, mime_type, prompt)
+            logger.debug("Image saved to %s", filepath)
+            result_blocks.append(
+                ImageContent(type="image", data=b64_data, mimeType=mime_type)
+            )
+            result_blocks.append(
+                TextContent(type="text", text=f"Saved to: {filepath}")
+            )
+
+        return result_blocks
+
+    # Dedicated image generation API (gpt-image-1, dall-e-3, imagen, etc.)
+    kwargs = {
+        "prompt": prompt,
+        "model": full_model,
+        "n": 1,
+        "api_key": api_key,
+        "timeout": 120,
+    }
+    if size is not None:
+        kwargs["size"] = size
+    if quality is not None:
+        kwargs["quality"] = quality
+
+    logger.debug("Calling litellm.image_generation(model=%s)", full_model)
+    response = litellm.image_generation(**kwargs)
+    logger.debug("Image generation response received from %s", full_model)
+
+    img_obj = response.data[0]
+    b64_data, mime_type = _extract_image_b64(
+        getattr(img_obj, "b64_json", None),
+        getattr(img_obj, "url", None),
+    )
+    filepath = _save_image(b64_data, mime_type, prompt)
+    logger.debug("Image saved to %s", filepath)
+
+    result_blocks = []
+    revised = getattr(img_obj, "revised_prompt", None)
+    if revised:
+        result_blocks.append(
+            TextContent(type="text", text=f"Revised prompt: {revised}")
+        )
+    result_blocks.append(
+        ImageContent(type="image", data=b64_data, mimeType=mime_type)
+    )
+    result_blocks.append(
+        TextContent(type="text", text=f"Saved to: {filepath}")
+    )
+    return result_blocks
+
+
 def _get_job_store(ctx: Context) -> JobStore:
     """Extract the JobStore from a tool's Context."""
     return ctx.request_context.lifespan_context["job_store"]
@@ -843,6 +962,83 @@ def _get_job_store(ctx: Context) -> JobStore:
 def _is_openai_research(model: str) -> bool:
     """Check if a model needs web_search_preview tools for research."""
     return model.startswith("openai/") and "deep-research" in model
+
+
+# ---------------------------------------------------------------------------
+# Image generation helpers
+# ---------------------------------------------------------------------------
+
+_NATIVE_IMAGE_PATTERNS = (
+    "gemini-2.0-flash-exp-image",
+    "gemini-2.5-flash-image",
+    "gemini-3-pro-image",
+    "gemini-3.1-flash-image",
+)
+
+
+def _is_native_image_model(model: str) -> bool:
+    """True if model generates images via completion with modalities,
+    False if it uses the dedicated image_generation API."""
+    return any(pat in model for pat in _NATIVE_IMAGE_PATTERNS)
+
+
+def _extract_image_b64(
+    b64_json: str | None,
+    url: str | None,
+) -> tuple[str, str]:
+    """Normalise image data from LiteLLM into (base64_data, mime_type).
+
+    Handles three formats:
+    - b64_json: raw base64 string (from image_generation response_format="b64_json")
+    - data URL: "data:image/png;base64,..." (from completion modalities)
+    - HTTP URL: fetch and base64-encode (fallback for url-only responses)
+    """
+    if b64_json:
+        return b64_json, "image/png"
+
+    if url:
+        if url.startswith("data:"):
+            header, b64 = url.split(",", 1)
+            mime = header.split(":")[1].split(";")[0]
+            return b64, mime
+        # HTTP URL — fetch it
+        req = urllib.request.Request(url)
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            raw = resp.read()
+            content_type = resp.headers.get("Content-Type", "image/png")
+        return base64.b64encode(raw).decode(), content_type
+
+    raise ValueError("No image data in response")
+
+
+def _save_image(b64_data: str, mime_type: str, prompt: str) -> Path:
+    """Save base64 image data to disk and return the file path.
+
+    Images are saved to IMAGE_OUTPUT_DIR (default: ~/Pictures/ask-another/).
+    Filenames are timestamp-based with a slugified prompt prefix.
+    """
+    output_dir = Path(
+        os.path.expanduser(
+            os.environ.get("IMAGE_OUTPUT_DIR", "~/Pictures/ask-another")
+        )
+    )
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    ext = {
+        "image/png": ".png",
+        "image/jpeg": ".jpg",
+        "image/webp": ".webp",
+        "image/gif": ".gif",
+    }.get(mime_type, ".png")
+
+    slug = re.sub(r"[^a-z0-9]+", "-", prompt[:40].lower()).strip("-")
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    filename = f"{timestamp}-{slug}{ext}"
+
+    filepath = output_dir / filename
+    filepath.write_bytes(base64.b64decode(b64_data))
+
+    return filepath
 
 
 def _run_research_completion_sync(job: ResearchJob, api_key: str) -> None:
