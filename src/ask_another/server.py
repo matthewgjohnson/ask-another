@@ -321,10 +321,30 @@ def _fetch_openrouter_models(
 ) -> tuple[list[str], dict[str, dict]]:
     """Fetch models from OpenRouter's API directly.
 
-    Returns (model_ids, metadata_dict). When zdr is True, fetches from the
-    ZDR endpoint which returns only ZDR-compatible models; metadata_dict
-    is empty since the ZDR endpoint lacks per-model metadata.
+    Returns (model_ids, metadata_dict). Metadata (pricing, context length,
+    listing date) always comes from the public /api/v1/models endpoint.
+    When zdr is True, the model list comes from the ZDR endpoint but
+    metadata is filtered to only ZDR-compatible models.
     """
+    # Always fetch metadata from the public models endpoint
+    pub_req = urllib.request.Request(
+        "https://openrouter.ai/api/v1/models",
+        headers={"Accept": "application/json"},
+    )
+    with urllib.request.urlopen(pub_req, timeout=60) as resp:
+        pub_data = json.loads(resp.read())
+
+    all_metadata: dict[str, dict] = {}
+    for m in pub_data.get("data", []):
+        model_id = f"openrouter/{m['id']}"
+        pricing = m.get("pricing") or {}
+        all_metadata[model_id] = {
+            "context_length": m.get("context_length"),
+            "pricing_in": pricing.get("prompt"),
+            "pricing_out": pricing.get("completion"),
+            "openrouter_listed": m.get("created"),
+        }
+
     if zdr:
         req = urllib.request.Request(
             "https://openrouter.ai/api/v1/endpoints/zdr",
@@ -343,29 +363,13 @@ def _fetch_openrouter_models(
                 seen.add(model_id)
                 models.append(f"openrouter/{model_id}")
         logger.debug("OpenRouter ZDR endpoint returned %d models", len(models))
-        return models, {}
+        # Return metadata only for ZDR-compatible models
+        zdr_metadata = {k: v for k, v in all_metadata.items() if k in models}
+        return models, zdr_metadata
 
-    req = urllib.request.Request(
-        "https://openrouter.ai/api/v1/models",
-        headers={"Accept": "application/json"},
-    )
-    with urllib.request.urlopen(req, timeout=60) as resp:
-        data = json.loads(resp.read())
-
-    models = []
-    metadata: dict[str, dict] = {}
-    for m in data.get("data", []):
-        model_id = f"openrouter/{m['id']}"
-        models.append(model_id)
-        pricing = m.get("pricing") or {}
-        metadata[model_id] = {
-            "context_length": m.get("context_length"),
-            "pricing_in": pricing.get("prompt"),
-            "pricing_out": pricing.get("completion"),
-            "openrouter_listed": m.get("created"),
-        }
+    models = list(all_metadata.keys())
     logger.debug("OpenRouter models endpoint returned %d models", len(models))
-    return models, metadata
+    return models, all_metadata
 
 
 def _fetch_models(provider: str, api_key: str, *, zdr: bool = False) -> list[str]:

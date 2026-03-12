@@ -574,11 +574,27 @@ def test_fetch_openrouter_models_returns_metadata(monkeypatch):
     assert meta["openrouter_listed"] == 1741564800
 
 
-def test_fetch_openrouter_models_zdr_returns_empty_metadata(monkeypatch):
-    """ZDR path returns (models, {}) since ZDR endpoint lacks metadata."""
+def test_fetch_openrouter_models_zdr_returns_metadata_for_zdr_models(monkeypatch):
+    """ZDR path fetches metadata from public endpoint, filters to ZDR models."""
     import urllib.request
 
-    fake_response_data = json.dumps({
+    fake_public = json.dumps({
+        "data": [
+            {
+                "id": "deepseek/deepseek-v3.2",
+                "context_length": 131072,
+                "pricing": {"prompt": "0.0000003", "completion": "0.0000008"},
+                "created": 1741564800,
+            },
+            {
+                "id": "some/non-zdr-model",
+                "context_length": 8192,
+                "pricing": {"prompt": "0.001", "completion": "0.002"},
+                "created": 1700000000,
+            },
+        ]
+    })
+    fake_zdr = json.dumps({
         "data": [
             {"model_id": "deepseek/deepseek-v3.2"},
         ]
@@ -595,13 +611,19 @@ def test_fetch_openrouter_models_zdr_returns_empty_metadata(monkeypatch):
             pass
 
     def mock_urlopen(req, timeout=None):
-        return FakeResponse(fake_response_data)
+        url = req.full_url if hasattr(req, "full_url") else str(req)
+        if "endpoints/zdr" in url:
+            return FakeResponse(fake_zdr)
+        return FakeResponse(fake_public)
 
     monkeypatch.setattr(urllib.request, "urlopen", mock_urlopen)
 
     models, metadata = server._fetch_openrouter_models("fake-key", zdr=True)
     assert "openrouter/deepseek/deepseek-v3.2" in models
-    assert metadata == {}
+    assert "openrouter/some/non-zdr-model" not in models
+    assert "openrouter/deepseek/deepseek-v3.2" in metadata
+    assert metadata["openrouter/deepseek/deepseek-v3.2"]["context_length"] == 131072
+    assert "openrouter/some/non-zdr-model" not in metadata
 
 
 @pytest.mark.parametrize("input_name,expected", [
