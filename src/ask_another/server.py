@@ -568,6 +568,26 @@ def search_models(
     return _zdr_warning(zdr, result)
 
 
+@mcp.tool()
+def annotate_models(
+    model: str,
+    note: str,
+) -> str:
+    """Add or update a personal note on a model. Notes appear in search_models
+    results and in the favourites list in server instructions.
+
+    Args:
+        model: Full model identifier (e.g. 'openai/gpt-5.2').
+        note: Your note about this model. Overwrites any existing note.
+    """
+    entry = _annotations.setdefault(model, {})
+    annotations = entry.setdefault("annotations", {})
+    annotations["note"] = note
+    _save_annotations(_annotations)
+    logger.debug("Annotation saved for %s", model)
+    return f"Note saved for {model}."
+
+
 @mcp.tool(
     annotations={
         "readOnlyHint": True,
