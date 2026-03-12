@@ -12,7 +12,7 @@ import time
 import urllib.request
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -61,6 +61,35 @@ def _track_usage(model_id: str) -> None:
     usage["call_count"] = usage.get("call_count", 0) + 1
     usage["last_used"] = datetime.now(timezone.utc).isoformat()
     _save_annotations(_annotations)
+
+
+def _get_favourites(annotations: dict[str, dict]) -> list[str]:
+    """Derive top 5 favourite models by call_count from annotations."""
+    models_with_usage = [
+        (model_id, entry.get("usage", {}).get("call_count", 0))
+        for model_id, entry in annotations.items()
+        if entry.get("usage", {}).get("call_count", 0) > 0
+    ]
+    models_with_usage.sort(key=lambda x: x[1], reverse=True)
+    return [model_id for model_id, _ in models_with_usage[:5]]
+
+
+def _get_recent_models(annotations: dict[str, dict], days: int = 7) -> list[tuple[str, str]]:
+    """Return models first seen within the last N days, newest first."""
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    recent = []
+    for model_id, entry in annotations.items():
+        first_seen = entry.get("metadata", {}).get("first_seen")
+        if not first_seen:
+            continue
+        try:
+            seen_dt = datetime.fromisoformat(first_seen)
+            if seen_dt >= cutoff:
+                recent.append((model_id, first_seen[:10]))  # date only
+        except (ValueError, TypeError):
+            continue
+    recent.sort(key=lambda x: x[1], reverse=True)
+    return recent
 
 
 # Provider registry: {provider_name: api_key}
@@ -442,7 +471,8 @@ def _resolve_model(model: str) -> tuple[str, str]:
     2. Full identifier: route directly by matching provider prefix
     """
     # Try shorthand resolution against favourites first
-    matches = [fav for fav in _favourites if fav.startswith(f"{model}/")]
+    favourites = _get_favourites(_annotations)
+    matches = [fav for fav in favourites if fav.startswith(f"{model}/")]
 
     if len(matches) == 1:
         fav = matches[0]
@@ -466,7 +496,7 @@ def _resolve_model(model: str) -> tuple[str, str]:
                 return model, api_key
 
     logger.warning("Model resolution failed for '%s'", model)
-    fav_list = ", ".join(_favourites) if _favourites else "(none configured)"
+    fav_list = ", ".join(favourites) if favourites else "(none — use the MCP to build usage)"
     raise ValueError(
         f"No favourite matches '{model}'. Available favourites: {fav_list}"
     )
@@ -500,14 +530,26 @@ def _build_instructions() -> str:
         "  - Call feedback before retrying if you receive confusing output",
         "    or a tool call fails — it helps us improve.",
     ]
-    if _favourites:
+    favourites = _get_favourites(_annotations)
+    if favourites:
         lines.append("Favourite Models:")
-        for fav in _favourites:
-            meta = _model_catalog.get(fav)
-            if meta and meta.description:
-                lines.append(f"  - {fav} — {meta.description}")
-            else:
-                lines.append(f"  - {fav}")
+        for fav in favourites:
+            entry = _annotations.get(fav, {})
+            note = entry.get("annotations", {}).get("note", "")
+            count = entry.get("usage", {}).get("call_count", 0)
+            parts = [fav]
+            if note:
+                parts.append(note)
+            parts.append(f"({count} calls)")
+            lines.append(f"  - {' — '.join(parts)}")
+
+    # Surface recently added models (first_seen within last 7 days)
+    recent = _get_recent_models(_annotations, days=7)
+    if recent:
+        lines.append("Recently Added:")
+        for model_id, first_seen in recent[:5]:
+            lines.append(f"  - {model_id} (added {first_seen})")
+
     return "\n".join(lines)
 
 

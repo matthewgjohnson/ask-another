@@ -90,17 +90,28 @@ def test_favourites_env_overrides_psv(tmp_path: Path, monkeypatch: object):
 
 
 def test_build_instructions_includes_descriptions(tmp_path: Path, monkeypatch: object):
-    """_build_instructions includes descriptions from the catalog."""
+    """_build_instructions surfaces usage-derived favourites with call counts."""
     psv_file = _write_psv(tmp_path)
     monkeypatch.setenv("MODELS_PSV", str(psv_file))
     monkeypatch.delenv("FAVOURITES", raising=False)
     monkeypatch.setenv("PROVIDER_TEST", "openai;sk-test")
+    monkeypatch.setattr(server, "_annotations", {
+        "gemini/gemini-test": {
+            "usage": {"call_count": 5, "last_used": "2026-03-12T00:00:00Z"},
+            "annotations": {"note": "Top model, best quality"},
+        },
+        "openai/test-coder": {
+            "usage": {"call_count": 2, "last_used": "2026-03-11T00:00:00Z"},
+        },
+    })
 
     server._load_config()
     instructions = server._build_instructions()
 
-    assert "gemini/gemini-test — Top model, best quality" in instructions
-    assert "openai/test-coder — Best for coding tasks" in instructions
+    assert "gemini/gemini-test" in instructions
+    assert "openai/test-coder" in instructions
+    assert "(5 calls)" in instructions
+    assert "(2 calls)" in instructions
 
 
 def test_search_models_includes_descriptions(tmp_path: Path, monkeypatch: object):

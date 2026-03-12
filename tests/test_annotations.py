@@ -1,6 +1,7 @@
 """Tests for the annotations system."""
 
 import json
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 import ask_another.server as server
@@ -78,3 +79,73 @@ def test_completion_tracks_usage(tmp_path, monkeypatch):
     server.completion(model="openai/gpt-5.2", prompt="hi again")
     loaded = json.loads(ann_file.read_text())
     assert loaded["openai/gpt-5.2"]["usage"]["call_count"] == 2
+
+
+def test_get_favourites_from_usage():
+    """Top 5 models by call_count are returned as favourites."""
+    annotations = {
+        f"openai/model-{i}": {
+            "usage": {"call_count": i, "last_used": "2026-03-12T00:00:00Z"}
+        }
+        for i in range(1, 8)
+    }
+    result = server._get_favourites(annotations)
+    assert len(result) == 5
+    assert result[0] == "openai/model-7"  # highest count first
+    assert result[4] == "openai/model-3"
+
+
+def test_get_favourites_empty():
+    """No usage data means no favourites."""
+    result = server._get_favourites({})
+    assert result == []
+
+
+def test_get_recent_models():
+    """Models first seen within last 7 days are returned, newest first."""
+    now = datetime.now(timezone.utc)
+    annotations = {
+        "openai/new-model": {
+            "metadata": {"first_seen": now.isoformat()}
+        },
+        "openai/old-model": {
+            "metadata": {"first_seen": (now - timedelta(days=30)).isoformat()}
+        },
+        "openai/recent-model": {
+            "metadata": {"first_seen": (now - timedelta(days=3)).isoformat()}
+        },
+    }
+    result = server._get_recent_models(annotations, days=7)
+    assert len(result) == 2
+    assert result[0][0] == "openai/new-model"
+    assert result[1][0] == "openai/recent-model"
+
+
+def test_build_instructions_from_usage(monkeypatch):
+    """Instructions surface top models by usage, highest call_count first."""
+    monkeypatch.setattr(server, "_annotations", {
+        "openai/gpt-5.2": {
+            "usage": {"call_count": 10, "last_used": "2026-03-12T00:00:00Z"},
+            "annotations": {"note": "Fast reasoning"},
+        },
+        "openai/gpt-4o": {
+            "usage": {"call_count": 3, "last_used": "2026-03-11T00:00:00Z"},
+        },
+    })
+    instructions = server._build_instructions()
+    assert "openai/gpt-5.2" in instructions
+    assert "openai/gpt-4o" in instructions
+    assert instructions.index("openai/gpt-5.2") < instructions.index("openai/gpt-4o")
+
+
+def test_resolve_model_shorthand_from_usage(monkeypatch):
+    """Shorthand resolution uses usage-derived favourites."""
+    monkeypatch.setattr(server, "_annotations", {
+        "openai/gpt-5.2": {
+            "usage": {"call_count": 10, "last_used": "2026-03-12T00:00:00Z"},
+        },
+    })
+    monkeypatch.setattr(server, "_provider_registry", {"openai": "sk-test"})
+    full_id, api_key = server._resolve_model("openai")
+    assert full_id == "openai/gpt-5.2"
+    assert api_key == "sk-test"
