@@ -780,9 +780,13 @@ def search_models(
         meta = entry.get("metadata", {})
         desc_parts = []
         if meta.get("arena_elo"):
-            desc_parts.append(f"Elo {meta['arena_elo']}")
-        if meta.get("livebench_avg"):
-            desc_parts.append(f"LiveBench {meta['livebench_avg']}")
+            desc_parts.append(f"Elo {meta['arena_elo']:.0f}")
+        if meta.get("knowledge_cutoff"):
+            desc_parts.append(f"cutoff {meta['knowledge_cutoff']}")
+        if meta.get("context_length"):
+            desc_parts.append(f"{meta['context_length'] // 1000}k ctx")
+        if meta.get("pricing_in"):
+            desc_parts.append(f"${meta['pricing_in']}/tok in")
         if note:
             desc_parts.append(note)
         if desc_parts:
