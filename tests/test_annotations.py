@@ -242,49 +242,66 @@ def test_annotate_models_updates_note(tmp_path, monkeypatch):
     assert loaded["openai/gpt-5.2"]["metadata"]["context"] == 200000  # untouched
 
 
-def test_parse_livebench_csv():
-    """LiveBench CSV rows are parsed into per-model scores."""
+def test_parse_arena_catalog():
+    """Arena catalog JSON is parsed into {normalized_name: elo}."""
+    catalog_json = json.dumps({
+        "full": {
+            "gpt-5.2": {"rating": 1486.0, "rating_q975": 1493.0, "rating_q025": 1480.0},
+            "claude-opus-4.6": {"rating": 1503.0, "rating_q975": 1510.0, "rating_q025": 1496.0},
+        },
+        "coding": {
+            "gpt-5.2": {"rating": 1490.0, "rating_q975": 1500.0, "rating_q025": 1480.0},
+        },
+    })
+    result = server._parse_arena_catalog(catalog_json)
+    assert result["gpt-5.2"] == 1486.0
+    assert result["claude-opus-4.6"] == 1503.0
+    assert len(result) == 2  # only 'full' category
+
+
+def test_parse_arena_catalog_missing_full():
+    """Returns empty dict if 'full' category is missing."""
+    result = server._parse_arena_catalog(json.dumps({"coding": {}}))
+    assert result == {}
+
+
+def test_parse_arena_metadata():
+    """Arena metadata CSV is parsed into {normalized_name: {fields}}."""
     csv_content = (
-        "model,reasoning,coding,math,language,data_analysis,global_avg\n"
-        "gpt-5.2,80.1,75.3,90.2,85.0,78.4,81.8\n"
-        "claude-opus-4.6,82.0,78.1,88.5,86.2,80.1,83.0\n"
+        "key,Model,MT-bench (score),MMLU,Knowledge cutoff date,License,Organization,Link\n"
+        "gpt-5.2,GPT-5.2,9.1,90.5,2025/6,Proprietary,OpenAI,https://openai.com\n"
+        "claude-opus-4.6,Claude Opus 4.6,9.3,91.2,2025/4,Proprietary,Anthropic,https://anthropic.com\n"
     )
-    result = server._parse_livebench(csv_content)
+    result = server._parse_arena_metadata(csv_content)
     assert "gpt-5.2" in result
-    assert result["gpt-5.2"]["global_avg"] == 81.8
+    assert result["gpt-5.2"]["knowledge_cutoff"] == "2025/6"
+    assert result["gpt-5.2"]["organization"] == "OpenAI"
+    assert result["gpt-5.2"]["license"] == "Proprietary"
     assert "claude-opus-4.6" in result
 
 
-def test_parse_lmarena_csv():
-    """LMArena CSV rows are parsed into per-model Elo scores."""
+def test_parse_arena_metadata_skips_empty_cutoff():
+    """Rows with '-' or empty cutoff date are included but with None cutoff."""
     csv_content = (
-        "model,elo,votes\n"
-        "gpt-5.2,1486,50000\n"
-        "claude-opus-4.6,1503,45000\n"
+        "key,Model,MT-bench (score),MMLU,Knowledge cutoff date,License,Organization,Link\n"
+        "model-a,Model A,8.0,80.0,-,MIT,OrgA,http://a.com\n"
     )
-    result = server._parse_lmarena(csv_content)
-    assert "gpt-5.2" in result
-    assert result["gpt-5.2"]["arena_elo"] == 1486.0
-    assert "claude-opus-4.6" in result
+    result = server._parse_arena_metadata(csv_content)
+    assert result["model-a"]["knowledge_cutoff"] is None
 
 
-def test_fetch_enrichment_merges_data(tmp_path, monkeypatch):
-    """_fetch_enrichment merges benchmark data into annotations and stamps first_seen."""
-    ann_file = tmp_path / "annotations.json"
-    ann_file.write_text("{}")
-    monkeypatch.setenv("ANNOTATIONS_FILE", str(ann_file))
-
-    # Pre-populate model cache
-    server._model_cache["openai"] = (["openai/gpt-5.2"], 0)
-    server._annotations = {}
-
-    # Mock URL fetches
-    livebench_csv = "model,global_avg\ngpt-5.2,81.8\n"
-    lmarena_csv = "model,elo\ngpt-5.2,1486\n"
-
-    call_count = {"n": 0}
-
+def test_discover_latest_arena_csv(monkeypatch):
+    """_discover_latest_arena_csv picks the latest dated filename."""
     import urllib.request
+
+    file_listing = json.dumps([
+        {"rfilename": "leaderboard_table_20250101.csv"},
+        {"rfilename": "leaderboard_table_20250804.csv"},
+        {"rfilename": "leaderboard_table_20250601.csv"},
+        {"rfilename": "README.md"},
+        {"rfilename": "elo_results_20250804.pkl"},
+    ])
+
     class FakeResponse:
         def __init__(self, data):
             self._data = data.encode()
@@ -296,25 +313,177 @@ def test_fetch_enrichment_merges_data(tmp_path, monkeypatch):
             pass
 
     def mock_urlopen(req, timeout=None):
-        call_count["n"] += 1
+        return FakeResponse(file_listing)
+
+    monkeypatch.setattr(urllib.request, "urlopen", mock_urlopen)
+
+    result = server._discover_latest_arena_csv()
+    assert result == "leaderboard_table_20250804.csv"
+
+
+def test_discover_latest_arena_csv_fallback(monkeypatch):
+    """Falls back to hardcoded filename on API error."""
+    import urllib.request
+    import urllib.error
+
+    def mock_urlopen(req, timeout=None):
+        raise urllib.error.URLError("network error")
+
+    monkeypatch.setattr(urllib.request, "urlopen", mock_urlopen)
+
+    result = server._discover_latest_arena_csv()
+    assert result == "leaderboard_table_20250804.csv"
+
+
+def test_fetch_enrichment_merges_data(tmp_path, monkeypatch):
+    """_fetch_enrichment merges arena Elo and metadata into annotations."""
+    ann_file = tmp_path / "annotations.json"
+    ann_file.write_text("{}")
+    monkeypatch.setenv("ANNOTATIONS_FILE", str(ann_file))
+
+    # Pre-populate model cache with two providers for same model
+    server._model_cache["openai"] = (["openai/gpt-5.2"], 0)
+    server._model_cache["openrouter:zdr=False"] = (["openrouter/openai/gpt-5.2"], 0)
+    server._annotations = {}
+
+    # Mock arena catalog (Elo)
+    arena_catalog = json.dumps({
+        "full": {"gpt-5.2": {"rating": 1486.0, "rating_q975": 1493.0, "rating_q025": 1480.0}},
+    })
+    # Mock arena metadata CSV
+    arena_csv = (
+        "key,Model,MT-bench (score),MMLU,Knowledge cutoff date,License,Organization,Link\n"
+        "gpt-5.2,GPT-5.2,9.1,90.5,2025/6,Proprietary,OpenAI,https://openai.com\n"
+    )
+    # Mock HF file listing
+    hf_listing = json.dumps([{"rfilename": "leaderboard_table_20250804.csv"}])
+
+    import urllib.request
+
+    class FakeResponse:
+        def __init__(self, data):
+            self._data = data.encode()
+        def read(self):
+            return self._data
+        def __enter__(self):
+            return self
+        def __exit__(self, *a):
+            pass
+
+    def mock_urlopen(req, timeout=None):
         url = req.full_url if hasattr(req, "full_url") else str(req)
-        if "livebench" in url.lower():
-            return FakeResponse(livebench_csv)
-        return FakeResponse(lmarena_csv)
+        if "arena-catalog" in url:
+            return FakeResponse(arena_catalog)
+        if "tree/main" in url:
+            return FakeResponse(hf_listing)
+        if "leaderboard_table" in url:
+            return FakeResponse(arena_csv)
+        raise ValueError(f"Unexpected URL: {url}")
 
     monkeypatch.setattr(urllib.request, "urlopen", mock_urlopen)
 
     server._fetch_enrichment()
 
-    assert "openai/gpt-5.2" in server._annotations
-    meta = server._annotations["openai/gpt-5.2"]["metadata"]
-    assert meta["livebench_avg"] == 81.8
-    assert meta["arena_elo"] == 1486.0
-    assert "first_seen" in meta
-    assert "last_updated" in meta
+    # Both providers should get arena data (cross-pollination for Elo/cutoff)
+    for model_id in ("openai/gpt-5.2", "openrouter/openai/gpt-5.2"):
+        assert model_id in server._annotations
+        meta = server._annotations[model_id]["metadata"]
+        assert meta["arena_elo"] == 1486.0
+        assert meta["knowledge_cutoff"] == "2025/6"
+        assert meta["organization"] == "OpenAI"
+        assert "first_seen" in meta
+        assert "last_updated" in meta
 
     # Clean up
     server._model_cache.pop("openai", None)
+    server._model_cache.pop("openrouter:zdr=False", None)
+
+
+def test_fetch_enrichment_removes_stale_livebench(tmp_path, monkeypatch):
+    """_fetch_enrichment removes livebench_avg from pre-existing annotations."""
+    ann_file = tmp_path / "annotations.json"
+    ann_file.write_text("{}")
+    monkeypatch.setenv("ANNOTATIONS_FILE", str(ann_file))
+
+    server._model_cache["openai"] = (["openai/gpt-5.2"], 0)
+    server._annotations = {
+        "openai/gpt-5.2": {"metadata": {"livebench_avg": 81.8, "first_seen": "2026-01-01T00:00:00Z"}}
+    }
+
+    import urllib.request
+
+    class FakeResponse:
+        def __init__(self, data):
+            self._data = data.encode()
+        def read(self):
+            return self._data
+        def __enter__(self):
+            return self
+        def __exit__(self, *a):
+            pass
+
+    # Return empty data for all sources — we're testing cleanup, not enrichment
+    def mock_urlopen(req, timeout=None):
+        url = req.full_url if hasattr(req, "full_url") else str(req)
+        if "arena-catalog" in url:
+            return FakeResponse('{"full": {}}')
+        if "tree/main" in url:
+            return FakeResponse("[]")
+        return FakeResponse("")
+
+    monkeypatch.setattr(urllib.request, "urlopen", mock_urlopen)
+
+    server._fetch_enrichment()
+
+    meta = server._annotations["openai/gpt-5.2"]["metadata"]
+    assert "livebench_avg" not in meta
+
+    server._model_cache.pop("openai", None)
+
+
+def test_refresh_provider_models_merges_openrouter_metadata(monkeypatch):
+    """_refresh_provider_models merges OpenRouter metadata into annotations."""
+    monkeypatch.setattr(server, "_provider_registry", {"openrouter": "fake-key"})
+    monkeypatch.setattr(server, "_zero_data_retention", False)
+    server._annotations = {}
+    server._model_cache.clear()
+
+    import urllib.request
+
+    fake_data = json.dumps({
+        "data": [{
+            "id": "deepseek/deepseek-v3.2",
+            "context_length": 131072,
+            "pricing": {"prompt": "0.0000003", "completion": "0.0000008"},
+            "created": 1741564800,
+        }]
+    })
+
+    class FakeResponse:
+        def __init__(self, data):
+            self._data = data.encode()
+        def read(self):
+            return self._data
+        def __enter__(self):
+            return self
+        def __exit__(self, *a):
+            pass
+
+    def mock_urlopen(req, timeout=None):
+        return FakeResponse(fake_data)
+
+    monkeypatch.setattr(urllib.request, "urlopen", mock_urlopen)
+
+    server._refresh_provider_models()
+
+    model_id = "openrouter/deepseek/deepseek-v3.2"
+    assert model_id in server._annotations
+    meta = server._annotations[model_id]["metadata"]
+    assert meta["context_length"] == 131072
+    assert meta["pricing_in"] == "0.0000003"
+
+    server._model_cache.clear()
+    server._annotations.clear()
 
 
 def test_needs_refresh_no_annotations():

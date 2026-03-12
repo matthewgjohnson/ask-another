@@ -484,71 +484,107 @@ def _normalize_model_name(name: str) -> str:
     return name
 
 
-_LIVEBENCH_URL = "https://huggingface.co/datasets/livebench/results/resolve/main/all_groups.csv"
-_LMARENA_URL = "https://huggingface.co/spaces/lmarena-ai/chatbot-arena-leaderboard/resolve/main/leaderboard_table.csv"
+_ARENA_CATALOG_URL = (
+    "https://raw.githubusercontent.com/lmarena/arena-catalog/main/data/leaderboard-text.json"
+)
+_ARENA_METADATA_BASE = (
+    "https://huggingface.co/spaces/lmarena-ai/arena-leaderboard/resolve/main/"
+)
+_ARENA_METADATA_FALLBACK = "leaderboard_table_20250804.csv"
+_ARENA_HF_API = (
+    "https://huggingface.co/api/spaces/lmarena-ai/arena-leaderboard/tree/main"
+)
 
 
-def _parse_livebench(csv_text: str) -> dict[str, dict]:
-    """Parse LiveBench CSV into {model_name: {field: value}}."""
+def _parse_arena_catalog(json_text: str) -> dict[str, float]:
+    """Parse arena-catalog JSON into {model_name: elo_rating}.
+
+    Reads only the 'full' category. Returns normalized model names as keys.
+    """
+    try:
+        data = json.loads(json_text)
+    except json.JSONDecodeError:
+        return {}
+    full = data.get("full", {})
+    result = {}
+    for model_name, scores in full.items():
+        rating = scores.get("rating")
+        if rating is not None:
+            result[_normalize_model_name(model_name)] = float(rating)
+    return result
+
+
+def _parse_arena_metadata(csv_text: str) -> dict[str, dict]:
+    """Parse arena metadata CSV into {normalized_name: {fields}}.
+
+    Extracts knowledge_cutoff, organization, license from each row.
+    """
     result = {}
     reader = csv.DictReader(io.StringIO(csv_text))
     for row in reader:
-        model = row.get("model", "").strip()
-        if not model:
+        key = row.get("key", "").strip()
+        if not key:
             continue
-        scores = {}
-        for key, val in row.items():
-            if key == "model":
-                continue
-            try:
-                scores[key] = float(val)
-            except (ValueError, TypeError):
-                pass
-        if scores:
-            result[model] = scores
+        cutoff = row.get("Knowledge cutoff date", "").strip()
+        result[_normalize_model_name(key)] = {
+            "knowledge_cutoff": cutoff if cutoff and cutoff != "-" else None,
+            "organization": row.get("Organization", "").strip() or None,
+            "license": row.get("License", "").strip() or None,
+        }
     return result
 
 
-def _parse_lmarena(csv_text: str) -> dict[str, dict]:
-    """Parse LMArena leaderboard CSV into {model_name: {elo: score}}."""
-    result = {}
-    reader = csv.DictReader(io.StringIO(csv_text))
-    for row in reader:
-        model = row.get("model", row.get("Model", "")).strip()
-        elo = row.get("elo", row.get("Arena Elo", row.get("rating", "")))
-        if model and elo:
-            try:
-                result[model] = {"arena_elo": float(elo)}
-            except (ValueError, TypeError):
-                pass
-    return result
+def _discover_latest_arena_csv() -> str:
+    """Find the latest leaderboard_table_YYYYMMDD.csv in the HF space.
+
+    Falls back to a hardcoded filename on any error.
+    """
+    try:
+        req = urllib.request.Request(_ARENA_HF_API, headers={"Accept": "application/json"})
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            files = json.loads(resp.read())
+        pattern = re.compile(r"^leaderboard_table_(\d{8})\.csv$")
+        dated = []
+        for f in files:
+            m = pattern.match(f.get("rfilename", ""))
+            if m:
+                dated.append((m.group(1), f["rfilename"]))
+        if dated:
+            dated.sort(reverse=True)
+            logger.debug("Latest arena CSV: %s", dated[0][1])
+            return dated[0][1]
+    except Exception as exc:
+        logger.warning("Failed to discover latest arena CSV: %s", exc)
+    return _ARENA_METADATA_FALLBACK
 
 
 def _fetch_enrichment() -> None:
-    """Fetch LiveBench and LMArena data, merge into annotations metadata."""
+    """Fetch arena Elo and metadata, merge into annotations."""
     now = datetime.now(timezone.utc).isoformat()
 
-    # Fetch LiveBench
+    # --- Source 1: Arena Elo ratings ---
+    arena_elo: dict[str, float] = {}
     try:
-        req = urllib.request.Request(_LIVEBENCH_URL)
+        req = urllib.request.Request(_ARENA_CATALOG_URL)
         with urllib.request.urlopen(req, timeout=30) as resp:
-            livebench = _parse_livebench(resp.read().decode())
-        logger.info("Fetched LiveBench data for %d models", len(livebench))
+            arena_elo = _parse_arena_catalog(resp.read().decode())
+        logger.info("Fetched arena Elo for %d models", len(arena_elo))
     except Exception as exc:
-        logger.warning("Failed to fetch LiveBench: %s", exc)
-        livebench = {}
+        logger.warning("Failed to fetch arena catalog: %s", exc)
 
-    # Fetch LMArena
+    # --- Source 2: Arena metadata (cutoff, org, license) ---
+    arena_meta: dict[str, dict] = {}
     try:
-        req = urllib.request.Request(_LMARENA_URL)
+        csv_filename = _discover_latest_arena_csv()
+        url = _ARENA_METADATA_BASE + csv_filename
+        req = urllib.request.Request(url)
         with urllib.request.urlopen(req, timeout=30) as resp:
-            lmarena = _parse_lmarena(resp.read().decode())
-        logger.info("Fetched LMArena data for %d models", len(lmarena))
+            arena_meta = _parse_arena_metadata(resp.read().decode())
+        logger.info("Fetched arena metadata for %d models from %s", len(arena_meta), csv_filename)
     except Exception as exc:
-        logger.warning("Failed to fetch LMArena: %s", exc)
-        lmarena = {}
+        logger.warning("Failed to fetch arena metadata: %s", exc)
 
-    # Merge into annotations — match by model name suffix
+    # --- Merge into annotations ---
     all_cached_models = [m for models, _ in _model_cache.values() for m in models]
     for model_id in all_cached_models:
         entry = _annotations.setdefault(model_id, {})
@@ -558,12 +594,18 @@ def _fetch_enrichment() -> None:
         if "first_seen" not in metadata:
             metadata["first_seen"] = now
 
-        # Try to match LiveBench/LMArena by model name (last segment)
-        model_name = model_id.rsplit("/", 1)[-1]
-        if model_name in livebench:
-            metadata["livebench_avg"] = livebench[model_name].get("global_avg")
-        if model_name in lmarena:
-            metadata["arena_elo"] = lmarena[model_name].get("arena_elo")
+        # Match arena data by normalized name — apply to ALL matching providers
+        norm = _normalize_model_name(model_id)
+        if norm in arena_elo:
+            metadata["arena_elo"] = arena_elo[norm]
+        if norm in arena_meta:
+            for field in ("knowledge_cutoff", "organization", "license"):
+                val = arena_meta[norm].get(field)
+                if val is not None:
+                    metadata[field] = val
+
+        # Remove stale livebench_avg if present (old source is dead)
+        metadata.pop("livebench_avg", None)
 
         metadata["last_updated"] = now
 
