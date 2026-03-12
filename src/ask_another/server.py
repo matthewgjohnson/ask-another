@@ -376,6 +376,20 @@ def _get_models(provider: str | None = None, *, zdr: bool | None = None) -> list
     return sorted(all_models)
 
 
+def _refresh_provider_models() -> None:
+    """Scan all configured providers and populate the model cache."""
+    for provider, api_key in _provider_registry.items():
+        effective_zdr = _zero_data_retention
+        cache_key = f"{provider}:zdr={effective_zdr}" if provider == "openrouter" else provider
+        try:
+            models = _fetch_models(provider, api_key, zdr=effective_zdr)
+            if models:
+                _model_cache[cache_key] = (models, time.time())
+                logger.info("Cached %d models for %s", len(models), provider)
+        except Exception as exc:
+            logger.warning("Failed to refresh models for %s: %s", provider, exc)
+
+
 # ---------------------------------------------------------------------------
 # Model resolution
 # ---------------------------------------------------------------------------

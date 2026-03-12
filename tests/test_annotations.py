@@ -178,3 +178,64 @@ def test_zero_data_retention_opt_out(monkeypatch):
     server._load_config()
 
     assert server._zero_data_retention is False
+
+
+def test_refresh_provider_models(tmp_path, monkeypatch):
+    """_refresh_provider_models populates the model cache from providers."""
+    ann_file = tmp_path / "annotations.json"
+    ann_file.write_text("{}")
+    monkeypatch.setenv("ANNOTATIONS_FILE", str(ann_file))
+    monkeypatch.setenv("PROVIDER_TEST", "openai;sk-test")
+    monkeypatch.setenv("CACHE_TTL_MINUTES", "360")
+
+    monkeypatch.setattr(
+        server, "_fetch_models",
+        lambda provider, api_key, *, zdr=False: ["openai/gpt-5.2", "openai/gpt-4o"],
+    )
+
+    server._load_config()
+    server._model_cache.clear()
+    server._refresh_provider_models()
+
+    all_cached = [m for models, _ in server._model_cache.values() for m in models]
+    assert "openai/gpt-5.2" in all_cached
+    assert "openai/gpt-4o" in all_cached
+
+
+def test_annotate_models_adds_note(tmp_path, monkeypatch):
+    """annotate_models writes a note to the annotations file."""
+    ann_file = tmp_path / "annotations.json"
+    ann_file.write_text("{}")
+    monkeypatch.setenv("ANNOTATIONS_FILE", str(ann_file))
+    server._annotations = server._load_annotations()
+
+    result = server.annotate_models(
+        model="openai/gpt-5.2",
+        note="Great for code review",
+    )
+    assert "saved" in result.lower()
+
+    loaded = json.loads(ann_file.read_text())
+    assert loaded["openai/gpt-5.2"]["annotations"]["note"] == "Great for code review"
+
+
+def test_annotate_models_updates_note(tmp_path, monkeypatch):
+    """annotate_models overwrites an existing note without touching other fields."""
+    ann_file = tmp_path / "annotations.json"
+    data = {
+        "openai/gpt-5.2": {
+            "metadata": {"context": 200000},
+            "usage": {"call_count": 5, "last_used": "2026-03-12T00:00:00Z"},
+            "annotations": {"note": "old note"},
+        }
+    }
+    ann_file.write_text(json.dumps(data))
+    monkeypatch.setenv("ANNOTATIONS_FILE", str(ann_file))
+    server._annotations = server._load_annotations()
+
+    server.annotate_models(model="openai/gpt-5.2", note="new note")
+
+    loaded = json.loads(ann_file.read_text())
+    assert loaded["openai/gpt-5.2"]["annotations"]["note"] == "new note"
+    assert loaded["openai/gpt-5.2"]["usage"]["call_count"] == 5  # untouched
+    assert loaded["openai/gpt-5.2"]["metadata"]["context"] == 200000  # untouched
