@@ -50,9 +50,11 @@ def _load_annotations() -> dict[str, dict]:
 
 
 def _save_annotations(data: dict[str, dict]) -> None:
-    """Save annotations to the JSON file."""
+    """Save annotations to the JSON file (atomic write via temp + rename)."""
     path = _get_annotations_path()
-    path.write_text(json.dumps(data, indent=2) + "\n")
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, indent=2) + "\n")
+    tmp.replace(path)
     logger.debug("Saved %d annotations to %s", len(data), path)
 
 
@@ -77,12 +79,20 @@ def _get_favourites(annotations: dict[str, dict]) -> list[str]:
 
 
 def _needs_refresh(annotations: dict[str, dict]) -> bool:
-    """Check if any model metadata is stale or missing."""
+    """Check if enriched model metadata is stale or missing.
+
+    Only considers entries that have a 'metadata' sub-object (i.e. have been
+    through enrichment before). Usage-only entries are ignored — they'll get
+    metadata on the next enrichment cycle.
+    """
     if not annotations:
         return True
+    enriched = [e for e in annotations.values() if "metadata" in e]
+    if not enriched:
+        return True
     now = datetime.now(timezone.utc)
-    for entry in annotations.values():
-        last = entry.get("metadata", {}).get("last_updated")
+    for entry in enriched:
+        last = entry["metadata"].get("last_updated")
         if not last:
             return True
         try:

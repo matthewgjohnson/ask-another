@@ -341,3 +341,17 @@ def test_needs_refresh_fresh(monkeypatch):
         }
     }
     assert server._needs_refresh(annotations) is False
+
+
+def test_needs_refresh_ignores_usage_only(monkeypatch):
+    """Usage-only entries (no metadata) don't trigger a refresh."""
+    monkeypatch.setattr(server, "_cache_ttl_minutes", 99999)
+    annotations = {
+        "openai/gpt-5.2": {
+            "metadata": {"last_updated": datetime.now(timezone.utc).isoformat()}
+        },
+        "openai/gpt-4o": {
+            "usage": {"call_count": 3, "last_used": "2026-03-12T00:00:00Z"}
+        },
+    }
+    assert server._needs_refresh(annotations) is False
