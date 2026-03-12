@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import csv
+import io
 import logging
 import logging.handlers
 import json
@@ -388,6 +390,96 @@ def _refresh_provider_models() -> None:
                 logger.info("Cached %d models for %s", len(models), provider)
         except Exception as exc:
             logger.warning("Failed to refresh models for %s: %s", provider, exc)
+
+
+# ---------------------------------------------------------------------------
+# Enrichment
+# ---------------------------------------------------------------------------
+
+_LIVEBENCH_URL = "https://huggingface.co/datasets/livebench/results/resolve/main/all_groups.csv"
+_LMARENA_URL = "https://huggingface.co/spaces/lmarena-ai/chatbot-arena-leaderboard/resolve/main/leaderboard_table.csv"
+
+
+def _parse_livebench(csv_text: str) -> dict[str, dict]:
+    """Parse LiveBench CSV into {model_name: {field: value}}."""
+    result = {}
+    reader = csv.DictReader(io.StringIO(csv_text))
+    for row in reader:
+        model = row.get("model", "").strip()
+        if not model:
+            continue
+        scores = {}
+        for key, val in row.items():
+            if key == "model":
+                continue
+            try:
+                scores[key] = float(val)
+            except (ValueError, TypeError):
+                pass
+        if scores:
+            result[model] = scores
+    return result
+
+
+def _parse_lmarena(csv_text: str) -> dict[str, dict]:
+    """Parse LMArena leaderboard CSV into {model_name: {elo: score}}."""
+    result = {}
+    reader = csv.DictReader(io.StringIO(csv_text))
+    for row in reader:
+        model = row.get("model", row.get("Model", "")).strip()
+        elo = row.get("elo", row.get("Arena Elo", row.get("rating", "")))
+        if model and elo:
+            try:
+                result[model] = {"arena_elo": float(elo)}
+            except (ValueError, TypeError):
+                pass
+    return result
+
+
+def _fetch_enrichment() -> None:
+    """Fetch LiveBench and LMArena data, merge into annotations metadata."""
+    now = datetime.now(timezone.utc).isoformat()
+
+    # Fetch LiveBench
+    try:
+        req = urllib.request.Request(_LIVEBENCH_URL)
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            livebench = _parse_livebench(resp.read().decode())
+        logger.info("Fetched LiveBench data for %d models", len(livebench))
+    except Exception as exc:
+        logger.warning("Failed to fetch LiveBench: %s", exc)
+        livebench = {}
+
+    # Fetch LMArena
+    try:
+        req = urllib.request.Request(_LMARENA_URL)
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            lmarena = _parse_lmarena(resp.read().decode())
+        logger.info("Fetched LMArena data for %d models", len(lmarena))
+    except Exception as exc:
+        logger.warning("Failed to fetch LMArena: %s", exc)
+        lmarena = {}
+
+    # Merge into annotations — match by model name suffix
+    all_cached_models = [m for models, _ in _model_cache.values() for m in models]
+    for model_id in all_cached_models:
+        entry = _annotations.setdefault(model_id, {})
+        metadata = entry.setdefault("metadata", {})
+
+        # Stamp first_seen only for newly discovered models
+        if "first_seen" not in metadata:
+            metadata["first_seen"] = now
+
+        # Try to match LiveBench/LMArena by model name (last segment)
+        model_name = model_id.rsplit("/", 1)[-1]
+        if model_name in livebench:
+            metadata["livebench_avg"] = livebench[model_name].get("global_avg")
+        if model_name in lmarena:
+            metadata["arena_elo"] = lmarena[model_name].get("arena_elo")
+
+        metadata["last_updated"] = now
+
+    _save_annotations(_annotations)
 
 
 # ---------------------------------------------------------------------------

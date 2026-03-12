@@ -239,3 +239,78 @@ def test_annotate_models_updates_note(tmp_path, monkeypatch):
     assert loaded["openai/gpt-5.2"]["annotations"]["note"] == "new note"
     assert loaded["openai/gpt-5.2"]["usage"]["call_count"] == 5  # untouched
     assert loaded["openai/gpt-5.2"]["metadata"]["context"] == 200000  # untouched
+
+
+def test_parse_livebench_csv():
+    """LiveBench CSV rows are parsed into per-model scores."""
+    csv_content = (
+        "model,reasoning,coding,math,language,data_analysis,global_avg\n"
+        "gpt-5.2,80.1,75.3,90.2,85.0,78.4,81.8\n"
+        "claude-opus-4.6,82.0,78.1,88.5,86.2,80.1,83.0\n"
+    )
+    result = server._parse_livebench(csv_content)
+    assert "gpt-5.2" in result
+    assert result["gpt-5.2"]["global_avg"] == 81.8
+    assert "claude-opus-4.6" in result
+
+
+def test_parse_lmarena_csv():
+    """LMArena CSV rows are parsed into per-model Elo scores."""
+    csv_content = (
+        "model,elo,votes\n"
+        "gpt-5.2,1486,50000\n"
+        "claude-opus-4.6,1503,45000\n"
+    )
+    result = server._parse_lmarena(csv_content)
+    assert "gpt-5.2" in result
+    assert result["gpt-5.2"]["arena_elo"] == 1486.0
+    assert "claude-opus-4.6" in result
+
+
+def test_fetch_enrichment_merges_data(tmp_path, monkeypatch):
+    """_fetch_enrichment merges benchmark data into annotations and stamps first_seen."""
+    ann_file = tmp_path / "annotations.json"
+    ann_file.write_text("{}")
+    monkeypatch.setenv("ANNOTATIONS_FILE", str(ann_file))
+
+    # Pre-populate model cache
+    server._model_cache["openai"] = (["openai/gpt-5.2"], 0)
+    server._annotations = {}
+
+    # Mock URL fetches
+    livebench_csv = "model,global_avg\ngpt-5.2,81.8\n"
+    lmarena_csv = "model,elo\ngpt-5.2,1486\n"
+
+    call_count = {"n": 0}
+
+    import urllib.request
+    class FakeResponse:
+        def __init__(self, data):
+            self._data = data.encode()
+        def read(self):
+            return self._data
+        def __enter__(self):
+            return self
+        def __exit__(self, *a):
+            pass
+
+    def mock_urlopen(req, timeout=None):
+        call_count["n"] += 1
+        url = req.full_url if hasattr(req, "full_url") else str(req)
+        if "livebench" in url.lower():
+            return FakeResponse(livebench_csv)
+        return FakeResponse(lmarena_csv)
+
+    monkeypatch.setattr(urllib.request, "urlopen", mock_urlopen)
+
+    server._fetch_enrichment()
+
+    assert "openai/gpt-5.2" in server._annotations
+    meta = server._annotations["openai/gpt-5.2"]["metadata"]
+    assert meta["livebench_avg"] == 81.8
+    assert meta["arena_elo"] == 1486.0
+    assert "first_seen" in meta
+    assert "last_updated" in meta
+
+    # Clean up
+    server._model_cache.pop("openai", None)
