@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import csv
+import io
 import logging
 import logging.handlers
 import json
@@ -12,7 +14,7 @@ import time
 import urllib.request
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -21,11 +23,107 @@ logger = logging.getLogger(__name__)
 import anyio
 from mcp.server.fastmcp import Context, FastMCP
 
+# In-memory annotations: {model_id: {metadata: {...}, usage: {...}, annotations: {...}}}
+_annotations: dict[str, dict] = {}
+
+
+def _get_annotations_path() -> Path:
+    """Return the annotations file path from env or default."""
+    return Path(
+        os.environ.get("ANNOTATIONS_FILE", os.path.expanduser("~/.ask-another-annotations.json"))
+    )
+
+
+def _load_annotations() -> dict[str, dict]:
+    """Load annotations from the JSON file. Returns empty dict if missing."""
+    path = _get_annotations_path()
+    if not path.is_file():
+        logger.debug("No annotations file at %s", path)
+        return {}
+    try:
+        data = json.loads(path.read_text())
+        logger.debug("Loaded %d annotations from %s", len(data), path)
+        return data
+    except (json.JSONDecodeError, OSError) as exc:
+        logger.warning("Failed to load annotations from %s: %s", path, exc)
+        return {}
+
+
+def _save_annotations(data: dict[str, dict]) -> None:
+    """Save annotations to the JSON file (atomic write via temp + rename)."""
+    path = _get_annotations_path()
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, indent=2) + "\n")
+    tmp.replace(path)
+    logger.debug("Saved %d annotations to %s", len(data), path)
+
+
+def _track_usage(model_id: str) -> None:
+    """Increment call_count and update last_used for a model."""
+    entry = _annotations.setdefault(model_id, {})
+    usage = entry.setdefault("usage", {"call_count": 0, "last_used": ""})
+    usage["call_count"] = usage.get("call_count", 0) + 1
+    usage["last_used"] = datetime.now(timezone.utc).isoformat()
+    _save_annotations(_annotations)
+
+
+def _get_favourites(annotations: dict[str, dict]) -> list[str]:
+    """Derive top 5 favourite models by call_count from annotations."""
+    models_with_usage = [
+        (model_id, entry.get("usage", {}).get("call_count", 0))
+        for model_id, entry in annotations.items()
+        if entry.get("usage", {}).get("call_count", 0) > 0
+    ]
+    models_with_usage.sort(key=lambda x: x[1], reverse=True)
+    return [model_id for model_id, _ in models_with_usage[:5]]
+
+
+def _needs_refresh(annotations: dict[str, dict]) -> bool:
+    """Check if enriched model metadata is stale or missing.
+
+    Only considers entries that have a 'metadata' sub-object (i.e. have been
+    through enrichment before). Usage-only entries are ignored — they'll get
+    metadata on the next enrichment cycle.
+    """
+    if not annotations:
+        return True
+    enriched = [e for e in annotations.values() if "metadata" in e]
+    if not enriched:
+        return True
+    now = datetime.now(timezone.utc)
+    for entry in enriched:
+        last = entry["metadata"].get("last_updated")
+        if not last:
+            return True
+        try:
+            updated_at = datetime.fromisoformat(last)
+            if (now - updated_at).total_seconds() > _cache_ttl_minutes * 60:
+                return True
+        except (ValueError, TypeError):
+            return True
+    return False
+
+
+def _get_recent_models(annotations: dict[str, dict], days: int = 7) -> list[tuple[str, str]]:
+    """Return models first seen within the last N days, newest first."""
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    recent = []
+    for model_id, entry in annotations.items():
+        first_seen = entry.get("metadata", {}).get("first_seen")
+        if not first_seen:
+            continue
+        try:
+            seen_dt = datetime.fromisoformat(first_seen)
+            if seen_dt >= cutoff:
+                recent.append((model_id, first_seen[:10]))  # date only
+        except (ValueError, TypeError):
+            continue
+    recent.sort(key=lambda x: x[1], reverse=True)
+    return recent
+
+
 # Provider registry: {provider_name: api_key}
 _provider_registry: dict[str, str] = {}
-
-# Favourites: list of full model identifiers
-_favourites: list[str] = []
 
 # Cache: {provider_name: (model_ids, timestamp)}
 _model_cache: dict[str, tuple[list[str], float]] = {}
@@ -35,19 +133,6 @@ _cache_ttl_minutes: int = 360
 
 # Whether to filter OpenRouter models to ZDR-compatible only (default: on)
 _zero_data_retention: bool = True
-
-
-@dataclass(frozen=True)
-class ModelMeta:
-    """Metadata for a model from the PSV catalog."""
-
-    model_id: str
-    favourite: bool
-    description: str
-
-
-# Model catalog: {model_id: ModelMeta}
-_model_catalog: dict[str, ModelMeta] = {}
 
 # Feedback log path
 _feedback_log: Path = Path(
@@ -104,8 +189,11 @@ class JobStore:
 
 @asynccontextmanager
 async def _lifespan(server: FastMCP) -> Any:
-    """Lifespan context providing a task group and job store."""
+    """Lifespan context: populate caches and enrich on startup."""
     async with anyio.create_task_group() as tg:
+        # Startup enrichment (run in thread to not block)
+        if _needs_refresh(_annotations):
+            await anyio.to_thread.run_sync(_startup_enrich)
         yield {"job_store": JobStore(tg)}
 
 
@@ -140,62 +228,6 @@ def _get_family(model_id: str) -> str:
     """Extract family from a model identifier (all path segments except the last)."""
     return model_id.rsplit("/", 1)[0]
 
-
-def _parse_favourites(value: str) -> list[str]:
-    """Parse the FAVOURITES environment variable.
-
-    Validates one favourite per family.
-    """
-    if not value.strip():
-        return []
-
-    favourites = [f.strip() for f in value.split(",") if f.strip()]
-
-    seen_families: dict[str, str] = {}
-    for fav in favourites:
-        family = _get_family(fav)
-        if family in seen_families:
-            raise ValueError(
-                f"Multiple favourites for family '{family}': "
-                f"'{seen_families[family]}' and '{fav}'"
-            )
-        seen_families[family] = fav
-
-    return favourites
-
-
-def _load_psv() -> dict[str, ModelMeta]:
-    """Load the model catalog from a PSV file.
-
-    Looks for the file at: MODELS_PSV env var, then next to this module.
-    Uses anchor-on-ends parsing: parts[0]=model_id, parts[-1]=description,
-    parts[-2]=favourite flag. Robust to column count changes.
-    """
-    psv_path_str = os.environ.get("MODELS_PSV", "")
-    if psv_path_str:
-        psv_path = Path(psv_path_str)
-    else:
-        psv_path = Path(__file__).parent / "models.psv"
-
-    if not psv_path.is_file():
-        logger.debug("No PSV catalog found at %s", psv_path)
-        return {}
-
-    catalog: dict[str, ModelMeta] = {}
-    for line in psv_path.read_text().splitlines():
-        line = line.strip()
-        if not line or line.startswith("model|"):
-            continue
-        parts = line.split("|")
-        if len(parts) < 3:
-            continue
-        model_id = parts[0]
-        description = parts[-1]
-        favourite = parts[-2].lower() == "yes" if len(parts) >= 2 else False
-        catalog[model_id] = ModelMeta(
-            model_id=model_id, favourite=favourite, description=description
-        )
-    return catalog
 
 
 def _configure_logging() -> None:
@@ -237,8 +269,8 @@ def _configure_logging() -> None:
 
 
 def _load_config() -> None:
-    """Scan environment and populate provider registry, favourites, and cache TTL."""
-    global _provider_registry, _favourites, _cache_ttl_minutes, _model_catalog, _zero_data_retention
+    """Scan environment and populate provider registry and cache TTL."""
+    global _provider_registry, _cache_ttl_minutes, _zero_data_retention, _annotations
 
     _configure_logging()
 
@@ -250,16 +282,11 @@ def _load_config() -> None:
             provider, api_key = _parse_provider_config(var_name, value)
             _provider_registry[provider] = api_key
 
-    favourites_str = os.environ.get("FAVOURITES", "")
-    _favourites = _parse_favourites(favourites_str)
-
     ttl_str = os.environ.get("CACHE_TTL_MINUTES", "360")
     try:
         _cache_ttl_minutes = int(ttl_str)
     except ValueError:
         raise ValueError(f"Invalid CACHE_TTL_MINUTES value: {ttl_str}")
-
-    _model_catalog = _load_psv()
 
     zdr_val = os.environ.get("ZERO_DATA_RETENTION", "").lower()
     if zdr_val:
@@ -267,16 +294,11 @@ def _load_config() -> None:
     else:
         _zero_data_retention = True
 
-    # Bootstrap favourites from PSV if FAVOURITES env var is empty
-    if not _favourites and _model_catalog:
-        _favourites = [
-            meta.model_id for meta in _model_catalog.values() if meta.favourite
-        ]
+    _annotations = _load_annotations()
 
     logger.info(
-        "Config loaded: %d providers, %d favourites, %d catalog entries, "
-        "ZDR=%s, cache_ttl=%dm",
-        len(_provider_registry), len(_favourites), len(_model_catalog),
+        "Config loaded: %d providers, %d annotations, ZDR=%s, cache_ttl=%dm",
+        len(_provider_registry), len(_annotations),
         _zero_data_retention, _cache_ttl_minutes,
     )
 
@@ -387,6 +409,117 @@ def _get_models(provider: str | None = None, *, zdr: bool | None = None) -> list
     return sorted(all_models)
 
 
+def _refresh_provider_models() -> None:
+    """Scan all configured providers and populate the model cache."""
+    for provider, api_key in _provider_registry.items():
+        effective_zdr = _zero_data_retention
+        cache_key = f"{provider}:zdr={effective_zdr}" if provider == "openrouter" else provider
+        try:
+            models = _fetch_models(provider, api_key, zdr=effective_zdr)
+            if models:
+                _model_cache[cache_key] = (models, time.time())
+                logger.info("Cached %d models for %s", len(models), provider)
+        except Exception as exc:
+            logger.warning("Failed to refresh models for %s: %s", provider, exc)
+
+
+def _startup_enrich() -> None:
+    """Refresh provider models and fetch benchmark data."""
+    _refresh_provider_models()
+    _fetch_enrichment()
+    logger.info("Startup enrichment complete")
+
+
+# ---------------------------------------------------------------------------
+# Enrichment
+# ---------------------------------------------------------------------------
+
+_LIVEBENCH_URL = "https://huggingface.co/datasets/livebench/results/resolve/main/all_groups.csv"
+_LMARENA_URL = "https://huggingface.co/spaces/lmarena-ai/chatbot-arena-leaderboard/resolve/main/leaderboard_table.csv"
+
+
+def _parse_livebench(csv_text: str) -> dict[str, dict]:
+    """Parse LiveBench CSV into {model_name: {field: value}}."""
+    result = {}
+    reader = csv.DictReader(io.StringIO(csv_text))
+    for row in reader:
+        model = row.get("model", "").strip()
+        if not model:
+            continue
+        scores = {}
+        for key, val in row.items():
+            if key == "model":
+                continue
+            try:
+                scores[key] = float(val)
+            except (ValueError, TypeError):
+                pass
+        if scores:
+            result[model] = scores
+    return result
+
+
+def _parse_lmarena(csv_text: str) -> dict[str, dict]:
+    """Parse LMArena leaderboard CSV into {model_name: {elo: score}}."""
+    result = {}
+    reader = csv.DictReader(io.StringIO(csv_text))
+    for row in reader:
+        model = row.get("model", row.get("Model", "")).strip()
+        elo = row.get("elo", row.get("Arena Elo", row.get("rating", "")))
+        if model and elo:
+            try:
+                result[model] = {"arena_elo": float(elo)}
+            except (ValueError, TypeError):
+                pass
+    return result
+
+
+def _fetch_enrichment() -> None:
+    """Fetch LiveBench and LMArena data, merge into annotations metadata."""
+    now = datetime.now(timezone.utc).isoformat()
+
+    # Fetch LiveBench
+    try:
+        req = urllib.request.Request(_LIVEBENCH_URL)
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            livebench = _parse_livebench(resp.read().decode())
+        logger.info("Fetched LiveBench data for %d models", len(livebench))
+    except Exception as exc:
+        logger.warning("Failed to fetch LiveBench: %s", exc)
+        livebench = {}
+
+    # Fetch LMArena
+    try:
+        req = urllib.request.Request(_LMARENA_URL)
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            lmarena = _parse_lmarena(resp.read().decode())
+        logger.info("Fetched LMArena data for %d models", len(lmarena))
+    except Exception as exc:
+        logger.warning("Failed to fetch LMArena: %s", exc)
+        lmarena = {}
+
+    # Merge into annotations — match by model name suffix
+    all_cached_models = [m for models, _ in _model_cache.values() for m in models]
+    for model_id in all_cached_models:
+        entry = _annotations.setdefault(model_id, {})
+        metadata = entry.setdefault("metadata", {})
+
+        # Stamp first_seen only for newly discovered models
+        if "first_seen" not in metadata:
+            metadata["first_seen"] = now
+
+        # Try to match LiveBench/LMArena by model name (last segment)
+        model_name = model_id.rsplit("/", 1)[-1]
+        if model_name in livebench:
+            metadata["livebench_avg"] = livebench[model_name].get("global_avg")
+        if model_name in lmarena:
+            metadata["arena_elo"] = lmarena[model_name].get("arena_elo")
+
+        metadata["last_updated"] = now
+
+    _save_annotations(_annotations)
+
+
 # ---------------------------------------------------------------------------
 # Model resolution
 # ---------------------------------------------------------------------------
@@ -400,7 +533,8 @@ def _resolve_model(model: str) -> tuple[str, str]:
     2. Full identifier: route directly by matching provider prefix
     """
     # Try shorthand resolution against favourites first
-    matches = [fav for fav in _favourites if fav.startswith(f"{model}/")]
+    favourites = _get_favourites(_annotations)
+    matches = [fav for fav in favourites if fav.startswith(f"{model}/")]
 
     if len(matches) == 1:
         fav = matches[0]
@@ -424,7 +558,7 @@ def _resolve_model(model: str) -> tuple[str, str]:
                 return model, api_key
 
     logger.warning("Model resolution failed for '%s'", model)
-    fav_list = ", ".join(_favourites) if _favourites else "(none configured)"
+    fav_list = ", ".join(favourites) if favourites else "(none — use the MCP to build usage)"
     raise ValueError(
         f"No favourite matches '{model}'. Available favourites: {fav_list}"
     )
@@ -458,14 +592,26 @@ def _build_instructions() -> str:
         "  - Call feedback before retrying if you receive confusing output",
         "    or a tool call fails — it helps us improve.",
     ]
-    if _favourites:
+    favourites = _get_favourites(_annotations)
+    if favourites:
         lines.append("Favourite Models:")
-        for fav in _favourites:
-            meta = _model_catalog.get(fav)
-            if meta and meta.description:
-                lines.append(f"  - {fav} — {meta.description}")
-            else:
-                lines.append(f"  - {fav}")
+        for fav in favourites:
+            entry = _annotations.get(fav, {})
+            note = entry.get("annotations", {}).get("note", "")
+            count = entry.get("usage", {}).get("call_count", 0)
+            parts = [fav]
+            if note:
+                parts.append(note)
+            parts.append(f"({count} calls)")
+            lines.append(f"  - {' — '.join(parts)}")
+
+    # Surface recently added models (first_seen within last 7 days)
+    recent = _get_recent_models(_annotations, days=7)
+    if recent:
+        lines.append("Recently Added:")
+        for model_id, first_seen in recent[:5]:
+            lines.append(f"  - {model_id} (added {first_seen})")
+
     return "\n".join(lines)
 
 
@@ -534,13 +680,54 @@ def search_models(
 
     lines = []
     for m in models:
-        meta = _model_catalog.get(m)
-        if meta and meta.description:
-            lines.append(f"{m} — {meta.description}")
+        entry = _annotations.get(m, {})
+        note = entry.get("annotations", {}).get("note", "")
+        meta = entry.get("metadata", {})
+        desc_parts = []
+        if meta.get("arena_elo"):
+            desc_parts.append(f"Elo {meta['arena_elo']}")
+        if meta.get("livebench_avg"):
+            desc_parts.append(f"LiveBench {meta['livebench_avg']}")
+        if note:
+            desc_parts.append(note)
+        if desc_parts:
+            lines.append(f"{m} — {', '.join(desc_parts)}")
         else:
             lines.append(m)
     result = "\n".join(lines)
     return _zdr_warning(zdr, result)
+
+
+@mcp.tool()
+def annotate_models(
+    model: str,
+    note: str,
+) -> str:
+    """Add or update a personal note on a model. Notes appear in search_models
+    results and in the favourites list in server instructions.
+
+    Args:
+        model: Full model identifier (e.g. 'openai/gpt-5.2').
+        note: Your note about this model. Overwrites any existing note.
+    """
+    entry = _annotations.setdefault(model, {})
+    annotations = entry.setdefault("annotations", {})
+    annotations["note"] = note
+    _save_annotations(_annotations)
+    logger.debug("Annotation saved for %s", model)
+    return f"Note saved for {model}."
+
+
+@mcp.tool()
+def refresh_models() -> str:
+    """Force a re-scan of all configured providers and re-fetch benchmark
+    data from LiveBench and LMArena. Use this if model data seems stale
+    or after adding a new provider.
+    """
+    _refresh_provider_models()
+    _fetch_enrichment()
+    cached_count = sum(len(models) for models, _ in _model_cache.values())
+    return f"Refreshed {cached_count} models across {len(_provider_registry)} providers."
 
 
 @mcp.tool(
@@ -641,6 +828,9 @@ def completion(
     logger.debug("Calling litellm.completion(model=%s)", full_model)
     response = litellm.completion(**kwargs)
     logger.debug("Completion response received from %s", full_model)
+
+    # Track usage
+    _track_usage(full_model)
 
     return response.choices[0].message.content
 
