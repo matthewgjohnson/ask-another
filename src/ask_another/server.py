@@ -316,11 +316,14 @@ def _normalise_model_id(model_id: str, provider: str) -> str:
     return model_id
 
 
-def _fetch_openrouter_models(api_key: str, *, zdr: bool = False) -> list[str]:
+def _fetch_openrouter_models(
+    api_key: str, *, zdr: bool = False
+) -> tuple[list[str], dict[str, dict]]:
     """Fetch models from OpenRouter's API directly.
 
-    When zdr is True, fetches from the ZDR endpoint which returns only
-    models compatible with Zero Data Retention.
+    Returns (model_ids, metadata_dict). When zdr is True, fetches from the
+    ZDR endpoint which returns only ZDR-compatible models; metadata_dict
+    is empty since the ZDR endpoint lacks per-model metadata.
     """
     if zdr:
         req = urllib.request.Request(
@@ -332,7 +335,6 @@ def _fetch_openrouter_models(api_key: str, *, zdr: bool = False) -> list[str]:
         )
         with urllib.request.urlopen(req, timeout=60) as resp:
             data = json.loads(resp.read())
-        # ZDR endpoint returns endpoints with model_id; deduplicate
         seen: set[str] = set()
         models: list[str] = []
         for endpoint in data.get("data", []):
@@ -341,7 +343,7 @@ def _fetch_openrouter_models(api_key: str, *, zdr: bool = False) -> list[str]:
                 seen.add(model_id)
                 models.append(f"openrouter/{model_id}")
         logger.debug("OpenRouter ZDR endpoint returned %d models", len(models))
-        return models
+        return models, {}
 
     req = urllib.request.Request(
         "https://openrouter.ai/api/v1/models",
@@ -349,9 +351,21 @@ def _fetch_openrouter_models(api_key: str, *, zdr: bool = False) -> list[str]:
     )
     with urllib.request.urlopen(req, timeout=60) as resp:
         data = json.loads(resp.read())
-    models = [f"openrouter/{m['id']}" for m in data.get("data", [])]
+
+    models = []
+    metadata: dict[str, dict] = {}
+    for m in data.get("data", []):
+        model_id = f"openrouter/{m['id']}"
+        models.append(model_id)
+        pricing = m.get("pricing") or {}
+        metadata[model_id] = {
+            "context_length": m.get("context_length"),
+            "pricing_in": pricing.get("prompt"),
+            "pricing_out": pricing.get("completion"),
+            "openrouter_listed": m.get("created"),
+        }
     logger.debug("OpenRouter models endpoint returned %d models", len(models))
-    return models
+    return models, metadata
 
 
 def _fetch_models(provider: str, api_key: str, *, zdr: bool = False) -> list[str]:
@@ -434,6 +448,33 @@ def _startup_enrich() -> None:
 # ---------------------------------------------------------------------------
 # Enrichment
 # ---------------------------------------------------------------------------
+
+# Regex for date suffixes: -YYYYMMDD or -YY-MM-DD
+_DATE_SUFFIX_RE = re.compile(r"-\d{4}-?\d{2}-?\d{2}$")
+# Suffixes to strip (order matters: dates first, then these)
+_STRIP_SUFFIXES = ("-preview", "-latest", "-experimental", "-exp")
+
+
+def _normalize_model_name(name: str) -> str:
+    """Normalize a model name for matching arena keys to provider IDs.
+
+    Strips provider prefix, date suffixes, and common suffixes like -preview.
+    Does NOT strip version suffixes like -v3 or -v3.2.
+    """
+    # Lowercase
+    name = name.lower()
+    # Strip provider prefix (everything up to last /)
+    if "/" in name:
+        name = name.rsplit("/", 1)[-1]
+    # Strip date suffixes first
+    name = _DATE_SUFFIX_RE.sub("", name)
+    # Strip known suffixes
+    for suffix in _STRIP_SUFFIXES:
+        if name.endswith(suffix):
+            name = name[: -len(suffix)]
+            break  # Only strip one suffix
+    return name
+
 
 _LIVEBENCH_URL = "https://huggingface.co/datasets/livebench/results/resolve/main/all_groups.csv"
 _LMARENA_URL = "https://huggingface.co/spaces/lmarena-ai/chatbot-arena-leaderboard/resolve/main/leaderboard_table.csv"

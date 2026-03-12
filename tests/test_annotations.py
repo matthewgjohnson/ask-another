@@ -4,6 +4,7 @@ import json
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
+import pytest
 import ask_another.server as server
 
 
@@ -355,3 +356,19 @@ def test_needs_refresh_ignores_usage_only(monkeypatch):
         },
     }
     assert server._needs_refresh(annotations) is False
+
+
+@pytest.mark.parametrize("input_name,expected", [
+    ("gemini/gemini-2.5-pro-preview", "gemini-2.5-pro"),
+    ("openrouter/anthropic/claude-sonnet-4-20250514", "claude-sonnet-4"),
+    ("openai/gpt-5.3-codex", "gpt-5.3-codex"),
+    ("openrouter/deepseek/deepseek-v3.2", "deepseek-v3.2"),
+    ("gemini-2.5-pro", "gemini-2.5-pro"),
+    ("gemini/gemini-2.0-flash-thinking-exp", "gemini-2.0-flash-thinking"),
+    ("openrouter/meta-llama/llama-3.1-405b-instruct", "llama-3.1-405b-instruct"),
+    ("gpt-4.1-mini-latest", "gpt-4.1-mini"),
+    ("openai/gpt-5.2", "gpt-5.2"),
+    ("model-preview-20250514", "model"),
+])
+def test_normalize_model_name(input_name, expected):
+    assert server._normalize_model_name(input_name) == expected
