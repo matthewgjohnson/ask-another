@@ -20,5 +20,8 @@ uv.lock
 # OS
 .DS_Store
 
+# Worktrees
+.worktrees/
+
 # Local docs
 Markdown Documentation Standards v3-03.md
