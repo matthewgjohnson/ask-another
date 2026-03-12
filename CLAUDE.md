@@ -24,28 +24,48 @@ uv run --with pytest python -m pytest tests/ -v
 The entire server lives in a single file: `src/ask_another/server.py`. It exposes these MCP tools:
 
 - **`search_families`** — discovers model families across configured providers, with optional substring search
-- **`search_models`** — finds specific model identifiers with optional substring search; enriches results with descriptions from the PSV model catalog
+- **`search_models`** — finds specific model identifiers with optional substring search; enriches results with metadata (Elo, LiveBench scores, notes) from the annotations file
+- **`completion`** — proxies a completion request to a specified LLM via LiteLLM, supports full model identifiers or favourite shorthand; tracks usage in the annotations file
+- **`annotate_models`** — adds or updates a personal note on a model; notes appear in search results and server instructions
+- **`refresh_models`** — force re-scan of all providers and re-fetch benchmark data from LiveBench and LMArena
 - **`feedback`** — collects usability issues from the LLM client into a JSONL log file (`~/.ask-another-feedback.jsonl` by default, configurable via `FEEDBACK_LOG` env var)
-- **`completion`** — proxies a completion request to a specified LLM via LiteLLM, supports full model identifiers or favourite shorthand
 - **`start_research`** — starts a deep research task that runs in the background via a lifespan task group. Supports two paths: OpenRouter (Perplexity/OpenAI via `litellm.completion`) and Gemini deep research (via `litellm.interactions.create` with polling). Blocks until results arrive or timeout, then returns results or a job handle. If interrupted (user hits escape), the research continues in the background.
 - **`check_research`** — lists all research jobs as a markdown table, or retrieves full results for a specific job_id
 - **`cancel_research`** — cancels a running research task by its job_id
+- **`generate_image`** — generates an image from a text prompt. Automatically routes between two LiteLLM paths: `litellm.image_generation()` for dedicated image models (gpt-image-1, dall-e-3, imagen-4) and `litellm.completion()` with `modalities=["image","text"]` for native image-output models (Gemini Nano Banana family). Returns images inline via MCP `ImageContent` and saves to disk.
 
 Providers are configured via `PROVIDER_*` environment variables with the format `provider-name;api-key`. These are parsed at module import time into a `_provider_registry` dict mapping provider names to API keys.
 
 Model discovery uses `litellm.get_valid_models(check_provider_endpoint=True)` by default, with exception handlers for providers where LiteLLM listing is unsupported (OpenRouter). A generic normalisation rule ensures all model IDs use `provider/model-name` format. Results are cached in memory with a configurable TTL.
 
-Favourites (`FAVOURITES` env var) enable shorthand resolution: passing `openai` to completion resolves to the configured OpenAI favourite. When `FAVOURITES` is not set, favourites are bootstrapped from the PSV model catalog (see below).
+### Annotations System
 
-### Model Catalog (PSV)
+`~/.ask-another-annotations.json` (configurable via `ANNOTATIONS_FILE` env var) is the single source of truth for model metadata, usage data, and personal notes. Schema:
 
-`src/ask_another/models.psv` ships with the package as the default model catalog. It's a pipe-separated file produced by the `/research-models` skill (canonical source: `docs/models.psv`). The catalog provides:
+```json
+{
+  "openai/gpt-5.2": {
+    "metadata": {
+      "arena_elo": 1486,
+      "livebench_avg": 81.8,
+      "first_seen": "2026-01-15T08:00:00Z",
+      "last_updated": "2026-03-12T10:30:00Z"
+    },
+    "usage": {
+      "call_count": 47,
+      "last_used": "2026-03-12T14:20:00Z"
+    },
+    "annotations": {
+      "note": "Fast, good for code review"
+    }
+  }
+}
+```
 
-- **Favourite bootstrapping**: when `FAVOURITES` env var is empty, models marked `favourite=yes` in the PSV are used
-- **Descriptions in instructions**: server instructions show `model_id — description` for each favourite, helping the LLM client choose
-- **Enriched search**: `search_models` includes descriptions from the catalog for every matching model
-
-Override the PSV path with the `MODELS_PSV` env var (useful for development: point at `docs/models.psv` directly). If the file is missing, the server degrades gracefully — no favourites, no descriptions.
+- **Favourites** are derived automatically from the top 5 models by `usage.call_count`. No configuration needed — just use the MCP and favourites emerge from actual usage.
+- **Notes** are set via the `annotate_models` tool. They appear in search results and server instructions.
+- **Metadata** is populated automatically on startup: the server scans all providers for available models, then fetches benchmark data from LiveBench (HuggingFace CSV) and LMArena (HuggingFace CSV). `first_seen` is stamped when a model is first discovered.
+- **Refresh** happens automatically when `metadata.last_updated` exceeds the TTL (`CACHE_TTL_MINUTES`, default 360 = 6 hours). Can also be triggered manually via `refresh_models`.
 
 ### Debug Logging
 
@@ -57,6 +77,7 @@ File-based debug logging can be enabled via environment variables. When disabled
 | `LOG_FILE` | `~/.ask-another.log` | Path to log file |
 | `LOG_FILE_SIZE` | `5` | Max file size in MB |
 | `LOG_FILE_COUNT` | `2` | Number of backup files to keep |
+| `IMAGE_OUTPUT_DIR` | `~/Pictures/ask-another` | Directory for saved generated images |
 
 Uses `RotatingFileHandler` — files rotate at `LOG_FILE_SIZE` MB, keeping `LOG_FILE_COUNT` backups (e.g. `.log`, `.log.1`, `.log.2`).
 
