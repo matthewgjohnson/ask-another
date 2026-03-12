@@ -371,7 +371,8 @@ def _fetch_openrouter_models(
 def _fetch_models(provider: str, api_key: str, *, zdr: bool = False) -> list[str]:
     """Fetch the model list for a provider."""
     if provider == "openrouter":
-        return _fetch_openrouter_models(api_key, zdr=zdr)
+        models, _ = _fetch_openrouter_models(api_key, zdr=zdr)
+        return models
 
     import litellm
 
@@ -430,7 +431,14 @@ def _refresh_provider_models() -> None:
         effective_zdr = _zero_data_retention
         cache_key = f"{provider}:zdr={effective_zdr}" if provider == "openrouter" else provider
         try:
-            models = _fetch_models(provider, api_key, zdr=effective_zdr)
+            if provider == "openrouter":
+                models, or_metadata = _fetch_openrouter_models(api_key, zdr=effective_zdr)
+                # Merge OpenRouter metadata into annotations
+                for model_id, meta in or_metadata.items():
+                    entry = _annotations.setdefault(model_id, {})
+                    entry.setdefault("metadata", {}).update(meta)
+            else:
+                models = _fetch_models(provider, api_key, zdr=effective_zdr)
             if models:
                 _model_cache[cache_key] = (models, time.time())
                 logger.info("Cached %d models for %s", len(models), provider)

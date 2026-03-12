@@ -358,6 +358,83 @@ def test_needs_refresh_ignores_usage_only(monkeypatch):
     assert server._needs_refresh(annotations) is False
 
 
+def test_fetch_openrouter_models_returns_metadata(monkeypatch):
+    """_fetch_openrouter_models returns model IDs and metadata dict."""
+    import urllib.request
+
+    fake_response_data = json.dumps({
+        "data": [
+            {
+                "id": "deepseek/deepseek-v3.2",
+                "context_length": 131072,
+                "pricing": {"prompt": "0.0000003", "completion": "0.0000008"},
+                "created": 1741564800,
+            },
+            {
+                "id": "openai/gpt-5.2",
+                "context_length": 200000,
+                "pricing": {"prompt": "0.000002", "completion": "0.000008"},
+                "created": 1740000000,
+            },
+        ]
+    })
+
+    class FakeResponse:
+        def __init__(self, data):
+            self._data = data.encode()
+        def read(self):
+            return self._data
+        def __enter__(self):
+            return self
+        def __exit__(self, *a):
+            pass
+
+    def mock_urlopen(req, timeout=None):
+        return FakeResponse(fake_response_data)
+
+    monkeypatch.setattr(urllib.request, "urlopen", mock_urlopen)
+
+    models, metadata = server._fetch_openrouter_models("fake-key")
+    assert "openrouter/deepseek/deepseek-v3.2" in models
+    assert "openrouter/openai/gpt-5.2" in models
+
+    meta = metadata["openrouter/deepseek/deepseek-v3.2"]
+    assert meta["context_length"] == 131072
+    assert meta["pricing_in"] == "0.0000003"
+    assert meta["pricing_out"] == "0.0000008"
+    assert meta["openrouter_listed"] == 1741564800
+
+
+def test_fetch_openrouter_models_zdr_returns_empty_metadata(monkeypatch):
+    """ZDR path returns (models, {}) since ZDR endpoint lacks metadata."""
+    import urllib.request
+
+    fake_response_data = json.dumps({
+        "data": [
+            {"model_id": "deepseek/deepseek-v3.2"},
+        ]
+    })
+
+    class FakeResponse:
+        def __init__(self, data):
+            self._data = data.encode()
+        def read(self):
+            return self._data
+        def __enter__(self):
+            return self
+        def __exit__(self, *a):
+            pass
+
+    def mock_urlopen(req, timeout=None):
+        return FakeResponse(fake_response_data)
+
+    monkeypatch.setattr(urllib.request, "urlopen", mock_urlopen)
+
+    models, metadata = server._fetch_openrouter_models("fake-key", zdr=True)
+    assert "openrouter/deepseek/deepseek-v3.2" in models
+    assert metadata == {}
+
+
 @pytest.mark.parametrize("input_name,expected", [
     ("gemini/gemini-2.5-pro-preview", "gemini-2.5-pro"),
     ("openrouter/anthropic/claude-sonnet-4-20250514", "claude-sonnet-4"),
