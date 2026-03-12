@@ -21,6 +21,39 @@ logger = logging.getLogger(__name__)
 import anyio
 from mcp.server.fastmcp import Context, FastMCP
 
+# In-memory annotations: {model_id: {metadata: {...}, usage: {...}, annotations: {...}}}
+_annotations: dict[str, dict] = {}
+
+
+def _get_annotations_path() -> Path:
+    """Return the annotations file path from env or default."""
+    return Path(
+        os.environ.get("ANNOTATIONS_FILE", os.path.expanduser("~/.ask-another-annotations.json"))
+    )
+
+
+def _load_annotations() -> dict[str, dict]:
+    """Load annotations from the JSON file. Returns empty dict if missing."""
+    path = _get_annotations_path()
+    if not path.is_file():
+        logger.debug("No annotations file at %s", path)
+        return {}
+    try:
+        data = json.loads(path.read_text())
+        logger.debug("Loaded %d annotations from %s", len(data), path)
+        return data
+    except (json.JSONDecodeError, OSError) as exc:
+        logger.warning("Failed to load annotations from %s: %s", path, exc)
+        return {}
+
+
+def _save_annotations(data: dict[str, dict]) -> None:
+    """Save annotations to the JSON file."""
+    path = _get_annotations_path()
+    path.write_text(json.dumps(data, indent=2) + "\n")
+    logger.debug("Saved %d annotations to %s", len(data), path)
+
+
 # Provider registry: {provider_name: api_key}
 _provider_registry: dict[str, str] = {}
 
