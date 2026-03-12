@@ -44,3 +44,37 @@ def test_save_annotations(tmp_path, monkeypatch):
     assert ann_file.exists()
     loaded = json.loads(ann_file.read_text())
     assert loaded == data
+
+
+def test_completion_tracks_usage(tmp_path, monkeypatch):
+    """completion() increments call_count and updates last_used."""
+    ann_file = tmp_path / "annotations.json"
+    ann_file.write_text("{}")
+    monkeypatch.setenv("ANNOTATIONS_FILE", str(ann_file))
+    monkeypatch.setenv("PROVIDER_TEST", "openai;sk-test")
+    monkeypatch.delenv("FAVOURITES", raising=False)
+    server._load_config()
+    server._annotations = server._load_annotations()
+
+    # Mock _resolve_model and litellm.completion
+    monkeypatch.setattr(server, "_resolve_model", lambda m: ("openai/gpt-5.2", "sk-test"))
+    monkeypatch.setattr(server, "_get_models", lambda provider=None, *, zdr=None: ["openai/gpt-5.2"])
+
+    class FakeChoice:
+        class message:
+            content = "Hello"
+    class FakeResponse:
+        choices = [FakeChoice()]
+
+    import litellm
+    monkeypatch.setattr(litellm, "completion", lambda **kw: FakeResponse())
+
+    server.completion(model="openai/gpt-5.2", prompt="hi")
+
+    loaded = json.loads(ann_file.read_text())
+    assert loaded["openai/gpt-5.2"]["usage"]["call_count"] == 1
+
+    # Call again
+    server.completion(model="openai/gpt-5.2", prompt="hi again")
+    loaded = json.loads(ann_file.read_text())
+    assert loaded["openai/gpt-5.2"]["usage"]["call_count"] == 2

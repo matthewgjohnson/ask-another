@@ -54,6 +54,15 @@ def _save_annotations(data: dict[str, dict]) -> None:
     logger.debug("Saved %d annotations to %s", len(data), path)
 
 
+def _track_usage(model_id: str) -> None:
+    """Increment call_count and update last_used for a model."""
+    entry = _annotations.setdefault(model_id, {})
+    usage = entry.setdefault("usage", {"call_count": 0, "last_used": ""})
+    usage["call_count"] = usage.get("call_count", 0) + 1
+    usage["last_used"] = datetime.now(timezone.utc).isoformat()
+    _save_annotations(_annotations)
+
+
 # Provider registry: {provider_name: api_key}
 _provider_registry: dict[str, str] = {}
 
@@ -674,6 +683,9 @@ def completion(
     logger.debug("Calling litellm.completion(model=%s)", full_model)
     response = litellm.completion(**kwargs)
     logger.debug("Completion response received from %s", full_model)
+
+    # Track usage
+    _track_usage(full_model)
 
     return response.choices[0].message.content
 
