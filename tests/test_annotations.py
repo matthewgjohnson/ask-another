@@ -314,3 +314,30 @@ def test_fetch_enrichment_merges_data(tmp_path, monkeypatch):
 
     # Clean up
     server._model_cache.pop("openai", None)
+
+
+def test_needs_refresh_no_annotations():
+    """Empty annotations means refresh is needed."""
+    assert server._needs_refresh({}) is True
+
+
+def test_needs_refresh_stale(monkeypatch):
+    """Annotations older than TTL need refresh."""
+    monkeypatch.setattr(server, "_cache_ttl_minutes", 1)
+    annotations = {
+        "openai/gpt-5.2": {
+            "metadata": {"last_updated": "2020-01-01T00:00:00Z"}
+        }
+    }
+    assert server._needs_refresh(annotations) is True
+
+
+def test_needs_refresh_fresh(monkeypatch):
+    """Recent annotations don't need refresh."""
+    monkeypatch.setattr(server, "_cache_ttl_minutes", 99999)
+    annotations = {
+        "openai/gpt-5.2": {
+            "metadata": {"last_updated": datetime.now(timezone.utc).isoformat()}
+        }
+    }
+    assert server._needs_refresh(annotations) is False

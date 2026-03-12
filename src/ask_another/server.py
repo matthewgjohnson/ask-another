@@ -76,6 +76,24 @@ def _get_favourites(annotations: dict[str, dict]) -> list[str]:
     return [model_id for model_id, _ in models_with_usage[:5]]
 
 
+def _needs_refresh(annotations: dict[str, dict]) -> bool:
+    """Check if any model metadata is stale or missing."""
+    if not annotations:
+        return True
+    now = datetime.now(timezone.utc)
+    for entry in annotations.values():
+        last = entry.get("metadata", {}).get("last_updated")
+        if not last:
+            return True
+        try:
+            updated_at = datetime.fromisoformat(last)
+            if (now - updated_at).total_seconds() > _cache_ttl_minutes * 60:
+                return True
+        except (ValueError, TypeError):
+            return True
+    return False
+
+
 def _get_recent_models(annotations: dict[str, dict], days: int = 7) -> list[tuple[str, str]]:
     """Return models first seen within the last N days, newest first."""
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
@@ -161,8 +179,11 @@ class JobStore:
 
 @asynccontextmanager
 async def _lifespan(server: FastMCP) -> Any:
-    """Lifespan context providing a task group and job store."""
+    """Lifespan context: populate caches and enrich on startup."""
     async with anyio.create_task_group() as tg:
+        # Startup enrichment (run in thread to not block)
+        if _needs_refresh(_annotations):
+            await anyio.to_thread.run_sync(_startup_enrich)
         yield {"job_store": JobStore(tg)}
 
 
@@ -390,6 +411,13 @@ def _refresh_provider_models() -> None:
                 logger.info("Cached %d models for %s", len(models), provider)
         except Exception as exc:
             logger.warning("Failed to refresh models for %s: %s", provider, exc)
+
+
+def _startup_enrich() -> None:
+    """Refresh provider models and fetch benchmark data."""
+    _refresh_provider_models()
+    _fetch_enrichment()
+    logger.info("Startup enrichment complete")
 
 
 # ---------------------------------------------------------------------------
@@ -678,6 +706,18 @@ def annotate_models(
     _save_annotations(_annotations)
     logger.debug("Annotation saved for %s", model)
     return f"Note saved for {model}."
+
+
+@mcp.tool()
+def refresh_models() -> str:
+    """Force a re-scan of all configured providers and re-fetch benchmark
+    data from LiveBench and LMArena. Use this if model data seems stale
+    or after adding a new provider.
+    """
+    _refresh_provider_models()
+    _fetch_enrichment()
+    cached_count = sum(len(models) for models, _ in _model_cache.values())
+    return f"Refreshed {cached_count} models across {len(_provider_registry)} providers."
 
 
 @mcp.tool(
