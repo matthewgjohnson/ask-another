@@ -823,9 +823,9 @@ def annotate_models(
 
 @mcp.tool()
 def refresh_models() -> str:
-    """Force a re-scan of all configured providers and re-fetch benchmark
-    data from LiveBench and LMArena. Use this if model data seems stale
-    or after adding a new provider.
+    """Force a re-scan of all configured providers and re-fetch enrichment
+    data from LMArena arena-catalog and LMArena metadata. Use this if
+    model data seems stale or after adding a new provider.
     """
     _refresh_provider_models()
     _fetch_enrichment()
@@ -946,7 +946,7 @@ def generate_image(
     quality: str | None = None,
 ) -> list:
     """Generate an image from a text prompt. The image is returned inline
-    and saved to disk (~/.Pictures/ask-another/ by default).
+    and saved to disk (~/Pictures/ask-another by default).
 
     Two model types are supported — the tool picks the right path automatically:
     - Dedicated image models (gpt-image-1, dall-e-3, imagen-4): best control
