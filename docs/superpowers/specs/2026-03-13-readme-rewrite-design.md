@@ -95,15 +95,16 @@ MIT
 
 ### Install uv
 
-Three platform commands, no curl|bash:
+Platform package managers (no curl|bash):
 
 ```
-macOS:    brew install uv
-Linux:    apt install uv
-Windows:  winget install astral-sh.uv
+macOS:          brew install uv
+Linux (Arch):   pacman -S uv
+Linux (Fedora): dnf install uv
+Windows:        winget install astral-sh.uv
 ```
 
-Link to [uv docs](https://docs.astral.sh/uv/) for alternative install methods.
+Note: `uv` is not in the default Debian/Ubuntu apt repos. For Ubuntu, use `snap install uv` or `brew install uv` (Homebrew on Linux). Link to [uv docs](https://docs.astral.sh/uv/getting-started/installation/) for all install methods.
 
 ### Client Setup
 
@@ -159,7 +160,7 @@ Models are discovered dynamically from each provider's API — no need to list i
 | Option | Default | Description |
 |--------|---------|-------------|
 | `CACHE_TTL_MINUTES` | `360` | How often to re-scan providers and re-fetch enrichment (minutes) |
-| `ZERO_DATA_RETENTION` | `true` | Filter OpenRouter to ZDR-compatible models only |
+| `ZERO_DATA_RETENTION` | enabled | Filter OpenRouter to ZDR-compatible models only. Set to `false` to list all models |
 | `LOG_LEVEL` | *(disabled)* | Enable file logging: `DEBUG`, `INFO`, `WARNING`, `ERROR` |
 | `LOG_FILE` | `~/.ask-another.log` | Log file path |
 | `LOG_FILE_SIZE` | `5` | Max log file size in MB |
@@ -194,7 +195,9 @@ Grouped by purpose. Each tool gets: name, one-line description, parameter list.
 |------|-------------|
 | `completion` | Query any model by full ID or favourite shorthand |
 
-Params: `model` (required — full ID or shorthand), `prompt` (required), `system` (optional), `temperature` (optional, 0.0-2.0)
+Params: `model` (required — full ID or shorthand), `prompt` (required), `system` (optional), `temperature` (optional, 0.0-2.0, omit to use model default)
+
+Note: shorthand resolves to the most-used model in that family (e.g. `openai` resolves to whatever OpenAI model you use most).
 
 #### Research
 
@@ -209,6 +212,8 @@ Params: `model` (required — full ID or shorthand), `prompt` (required), `syste
 **check_research** params: `job_id` (optional — omit to list all)
 
 **cancel_research** params: `job_id` (required)
+
+Note: some tools have a `ctx` parameter injected by the MCP framework — this is not user-facing and excluded from documentation.
 
 #### Creative
 
@@ -304,6 +309,7 @@ uv run --with pytest python -m pytest tests/test_annotations.py -v
 
 Test map:
 - `test_annotations.py` — enrichment, normalisation, metadata, search
+- `test_feedback.py` — feedback tool and JSONL logging
 - `test_image_generation.py` — image generation paths
 - `test_logging.py` — log config and rotation
 
@@ -322,7 +328,9 @@ Run the full test suite locally before opening a PR.
 
 ## Bonus Fix
 
-`refresh_models` docstring (server.py line 827) still says "LiveBench and LMArena" — update to "LMArena arena-catalog and LMArena metadata" while we're touching docs.
+Two docstring fixes in server.py while we're touching docs:
+1. `refresh_models` (line 827) — says "LiveBench and LMArena", should say "LMArena arena-catalog and LMArena metadata"
+2. `generate_image` (line 949) — says `~/.Pictures/ask-another/` (note leading dot), should say `~/Pictures/ask-another`
 
 ## Not Changing
 
