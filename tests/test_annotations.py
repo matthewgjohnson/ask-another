@@ -684,3 +684,16 @@ def test_build_instructions_elo_and_favourites_coexist(monkeypatch):
     instructions = server._build_instructions()
     assert "Favourite Models:" in instructions
     assert "Top Rated Models (by Elo):" in instructions
+
+
+def test_build_instructions_elo_deduplicates_providers(monkeypatch):
+    """Same model via different providers only appears once in Top Rated."""
+    monkeypatch.setattr(server, "_annotations", {
+        "openai/gpt-5.4": {"metadata": {"arena_elo": 1510}},
+        "openrouter/openai/gpt-5.4": {"metadata": {"arena_elo": 1510}},
+        "gemini/gemini-3.5-pro": {"metadata": {"arena_elo": 1497}},
+    })
+    instructions = server._build_instructions()
+    # gpt-5.4 should appear only once despite two providers
+    assert instructions.count("gpt-5.4") == 1
+    assert "gemini-3.5-pro" in instructions

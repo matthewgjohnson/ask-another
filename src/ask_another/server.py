@@ -686,6 +686,9 @@ def _build_instructions() -> str:
         "  - Provide access to other models through litellm.",
         "Howto:",
         "  - For a quick query, use completion with a favourite shorthand (see below).",
+        "    Shorthand is a provider name (e.g. 'openai') that resolves to your",
+        "    most-used model from that provider. This is not guessing — shorthands",
+        "    are resolved deterministically from your usage history.",
         "  - To find any model, use search_models — results include descriptions",
         "    from the model catalog when available.",
         "  - For deep research tasks, use start_research. If it is interrupted or",
@@ -694,13 +697,14 @@ def _build_instructions() -> str:
         "  - To generate images, use generate_image with a model like",
         "    openai/gpt-image-1 or gemini/gemini-2.5-flash-image.",
         "    Images are displayed inline and saved to disk.",
-        "  - Never guess model IDs.",
+        "  - Never guess model IDs. Use search_models to find valid identifiers,",
+        "    or use a favourite/shorthand listed below.",
         "Feedback:",
         "  - We'd love to hear how ask-another is working for you. Call",
         "    feedback to share issues, suggestions, or anything that felt",
         "    harder than it should be.",
-        "  - Call feedback before retrying if you receive confusing output",
-        "    or a tool call fails — it helps us improve.",
+        "  - If you receive confusing output or a tool call fails, consider calling",
+        "    feedback to report the issue — but don't let it block your work.",
     ]
     favourites = _get_favourites(_annotations)
     if favourites:
@@ -712,7 +716,7 @@ def _build_instructions() -> str:
             parts = [fav]
             if note:
                 parts.append(note)
-            parts.append(f"({count} calls)")
+            parts.append(f"({count} calls made)")
             lines.append(f"  - {' — '.join(parts)}")
 
     rated = [
@@ -722,8 +726,17 @@ def _build_instructions() -> str:
     ]
     rated.sort(key=lambda x: x[1], reverse=True)
     if rated:
+        # Deduplicate: same model via multiple providers → prefer direct provider
+        seen_normalized: set[str] = set()
+        deduped: list[tuple[str, float]] = []
+        for model_id, elo in rated:
+            norm = _normalize_model_name(model_id)
+            if norm in seen_normalized:
+                continue
+            seen_normalized.add(norm)
+            deduped.append((model_id, elo))
         lines.append("Top Rated Models (by Elo):")
-        for model_id, elo in rated[:5]:
+        for model_id, elo in deduped[:5]:
             lines.append(f"  - {model_id} (Elo {elo:.0f})")
 
     # Surface recently added models (first_seen within last 7 days)
@@ -766,9 +779,9 @@ def search_families(
 
     Args:
         search: Substring filter applied to family names
-        zdr: Filter OpenRouter models to ZDR-compatible only. Defaults to
-             the server's ZERO_DATA_RETENTION setting. Set explicitly to
-             override.
+        zdr: Filter OpenRouter models to Zero Data Retention (ZDR) compatible
+             only. Defaults to the server's ZERO_DATA_RETENTION setting.
+             Set explicitly to override.
     """
     all_models = _get_models(zdr=zdr)
     families = sorted(set(_get_family(m) for m in all_models))
@@ -790,9 +803,9 @@ def search_models(
 
     Args:
         search: Substring filter applied to full model identifiers
-        zdr: Filter OpenRouter models to ZDR-compatible only. Defaults to
-             the server's ZERO_DATA_RETENTION setting. Set explicitly to
-             override.
+        zdr: Filter OpenRouter models to Zero Data Retention (ZDR) compatible
+             only. Defaults to the server's ZERO_DATA_RETENTION setting.
+             Set explicitly to override.
     """
     models = _get_models(zdr=zdr)
 
@@ -900,17 +913,21 @@ def completion(
     temperature: float | None = None,
 ) -> str:
     """Call a model for a quick completion. Use this for standard prompts that
-    return in seconds — use start_research instead for deep research tasks.
+    return in seconds — use start_research instead for deep research tasks
+    that need web search and source synthesis.
+
     Use a favourite shorthand (e.g. 'openai') or an exact model ID verified
-    via search_models. Do not set temperature unless you have a specific
-    reason — some models reject non-default values.
+    via search_models. Shorthands and favourite model IDs listed in the server
+    instructions can be used directly without calling search_models first.
 
     Args:
-        model: Full model identifier (e.g. 'openai/gpt-4o') or favourite shorthand (e.g. 'openai').
-               Use search_models to find valid identifiers.
+        model: Full model identifier (e.g. 'openai/gpt-5.2') or favourite
+               shorthand (e.g. 'openai' → resolves to your most-used OpenAI
+               model). Use search_models to find other valid identifiers.
         prompt: The user prompt to send to the model
         system: Optional system prompt
         temperature: Sampling temperature (0.0-2.0). Omit to use model default.
+                     Some models reject non-default values — omit unless needed.
     """
     import litellm
 
@@ -981,10 +998,14 @@ def generate_image(
                'gemini/gemini-2.5-flash-image'). Use search_models with
                'image' to find available image models.
         prompt: Text description of the image to generate.
-        size: Image dimensions (e.g. '1024x1024', '1536x1024'). Only used
-              by dedicated image models. Omit to use the model's default.
-        quality: Image quality ('low', 'medium', 'high', 'hd', 'standard').
-                 Only used by dedicated image models. Omit for default.
+        size: Image dimensions. Only used by dedicated image models — ignored
+              by native image-output models. Common values: '1024x1024' (square),
+              '1536x1024' (landscape), '1024x1536' (portrait). Valid options
+              depend on the model. Omit to use the model's default.
+        quality: Image quality. Only used by dedicated image models — ignored
+                 by native image-output models. For gpt-image-1: 'low',
+                 'medium', 'high'. For dall-e-3: 'standard', 'hd'. Omit for
+                 the model's default.
     """
     import litellm
 
