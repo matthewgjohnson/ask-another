@@ -714,18 +714,17 @@ def _build_instructions() -> str:
                 parts.append(note)
             parts.append(f"({count} calls)")
             lines.append(f"  - {' — '.join(parts)}")
-    else:
-        # Cold start: surface top models by Elo so the client has something to work with
-        rated = [
-            (model_id, entry.get("metadata", {}).get("arena_elo", 0))
-            for model_id, entry in _annotations.items()
-            if entry.get("metadata", {}).get("arena_elo")
-        ]
-        rated.sort(key=lambda x: x[1], reverse=True)
-        if rated:
-            lines.append("Top Rated Models (by Elo — use any as a shorthand or full ID):")
-            for model_id, elo in rated[:5]:
-                lines.append(f"  - {model_id} (Elo {elo:.0f})")
+
+    rated = [
+        (model_id, entry.get("metadata", {}).get("arena_elo", 0))
+        for model_id, entry in _annotations.items()
+        if entry.get("metadata", {}).get("arena_elo")
+    ]
+    rated.sort(key=lambda x: x[1], reverse=True)
+    if rated:
+        lines.append("Top Rated Models (by Elo):")
+        for model_id, elo in rated[:5]:
+            lines.append(f"  - {model_id} (Elo {elo:.0f})")
 
     # Surface recently added models (first_seen within last 7 days)
     recent = _get_recent_models(_annotations, days=7)
