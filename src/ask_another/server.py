@@ -724,9 +724,10 @@ def _build_instructions() -> str:
         for model_id, entry in _annotations.items()
         if entry.get("metadata", {}).get("arena_elo")
     ]
-    rated.sort(key=lambda x: x[1], reverse=True)
+    # Sort by Elo desc, then prefer direct providers (fewer path segments)
+    rated.sort(key=lambda x: (-x[1], x[0].count("/"), x[0]))
     if rated:
-        # Deduplicate: same model via multiple providers → prefer direct provider
+        # Deduplicate: same model via multiple providers → keep first (most direct)
         seen_normalized: set[str] = set()
         deduped: list[tuple[str, float]] = []
         for model_id, elo in rated:
@@ -742,9 +743,19 @@ def _build_instructions() -> str:
     # Surface recently added models (first_seen within last 7 days)
     recent = _get_recent_models(_annotations, days=7)
     if recent:
+        # Deduplicate recently added the same way
+        seen_recent: set[str] = set()
         lines.append("Recently Added:")
-        for model_id, first_seen in recent[:5]:
+        count = 0
+        for model_id, first_seen in recent:
+            norm = _normalize_model_name(model_id)
+            if norm in seen_recent:
+                continue
+            seen_recent.add(norm)
             lines.append(f"  - {model_id} (added {first_seen})")
+            count += 1
+            if count >= 5:
+                break
 
     return "\n".join(lines)
 
