@@ -120,10 +120,10 @@ Full JSON snippet (same as README quick start).
 
 ```bash
 claude mcp add ask-another \
-  uvx --from git+https://github.com/matthewgjohnson/ask-another ask-another \
   -e PROVIDER_OPENAI="openai;sk-your-key" \
   -e PROVIDER_GEMINI="gemini;your-key" \
-  -e PROVIDER_OPENROUTER="openrouter;sk-or-your-key"
+  -e PROVIDER_OPENROUTER="openrouter;sk-or-your-key" \
+  -- uvx --from git+https://github.com/matthewgjohnson/ask-another ask-another
 ```
 
 #### Other Clients
