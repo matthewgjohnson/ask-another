@@ -346,4 +346,4 @@ Two docstring fixes in server.py while we're touching docs:
 | `README.md` | Full rewrite — lean landing page |
 | `docs/install.md` | New — uv install, client configs, config options |
 | `docs/reference.md` | New — tools, annotations, architecture, development |
-| `src/ask_another/server.py` | One-line docstring fix in `refresh_models` |
+| `src/ask_another/server.py` | Two docstring fixes: `refresh_models` (LiveBench reference) and `generate_image` (path typo) |
