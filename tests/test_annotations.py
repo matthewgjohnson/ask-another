@@ -8,6 +8,30 @@ import pytest
 import ask_another.server as server
 
 
+# -- Shared test doubles --
+
+class FakeUrlResponse:
+    """Mock for urllib.request.urlopen responses."""
+    def __init__(self, data):
+        self._data = data.encode()
+    def read(self):
+        return self._data
+    def __enter__(self):
+        return self
+    def __exit__(self, *a):
+        pass
+
+
+class _FakeChoice:
+    class message:
+        content = "Hello"
+
+
+class FakeLlmResponse:
+    """Mock for litellm.completion responses."""
+    choices = [_FakeChoice()]
+
+
 def test_load_annotations_missing_file(tmp_path, monkeypatch):
     """Loading a nonexistent annotations file returns empty dict."""
     monkeypatch.setenv("ANNOTATIONS_FILE", str(tmp_path / "annotations.json"))
@@ -61,14 +85,8 @@ def test_completion_tracks_usage(tmp_path, monkeypatch):
     monkeypatch.setattr(server, "_resolve_model", lambda m: ("openai/gpt-5.2", "sk-test"))
     monkeypatch.setattr(server, "_get_models", lambda provider=None, *, zdr=None: ["openai/gpt-5.2"])
 
-    class FakeChoice:
-        class message:
-            content = "Hello"
-    class FakeResponse:
-        choices = [FakeChoice()]
-
     import litellm
-    monkeypatch.setattr(litellm, "completion", lambda **kw: FakeResponse())
+    monkeypatch.setattr(litellm, "completion", lambda **kw: FakeLlmResponse())
 
     server.completion(model="openai/gpt-5.2", prompt="hi")
 
@@ -302,18 +320,8 @@ def test_discover_latest_arena_csv(monkeypatch):
         {"rfilename": "elo_results_20250804.pkl"},
     ])
 
-    class FakeResponse:
-        def __init__(self, data):
-            self._data = data.encode()
-        def read(self):
-            return self._data
-        def __enter__(self):
-            return self
-        def __exit__(self, *a):
-            pass
-
     def mock_urlopen(req, timeout=None):
-        return FakeResponse(file_listing)
+        return FakeUrlResponse(file_listing)
 
     monkeypatch.setattr(urllib.request, "urlopen", mock_urlopen)
 
@@ -360,24 +368,14 @@ def test_fetch_enrichment_merges_data(tmp_path, monkeypatch):
 
     import urllib.request
 
-    class FakeResponse:
-        def __init__(self, data):
-            self._data = data.encode()
-        def read(self):
-            return self._data
-        def __enter__(self):
-            return self
-        def __exit__(self, *a):
-            pass
-
     def mock_urlopen(req, timeout=None):
         url = req.full_url if hasattr(req, "full_url") else str(req)
         if "arena-catalog" in url:
-            return FakeResponse(arena_catalog)
+            return FakeUrlResponse(arena_catalog)
         if "tree/main" in url:
-            return FakeResponse(hf_listing)
+            return FakeUrlResponse(hf_listing)
         if "leaderboard_table" in url:
-            return FakeResponse(arena_csv)
+            return FakeUrlResponse(arena_csv)
         raise ValueError(f"Unexpected URL: {url}")
 
     monkeypatch.setattr(urllib.request, "urlopen", mock_urlopen)
@@ -412,24 +410,14 @@ def test_fetch_enrichment_removes_stale_livebench(tmp_path, monkeypatch):
 
     import urllib.request
 
-    class FakeResponse:
-        def __init__(self, data):
-            self._data = data.encode()
-        def read(self):
-            return self._data
-        def __enter__(self):
-            return self
-        def __exit__(self, *a):
-            pass
-
     # Return empty data for all sources — we're testing cleanup, not enrichment
     def mock_urlopen(req, timeout=None):
         url = req.full_url if hasattr(req, "full_url") else str(req)
         if "arena-catalog" in url:
-            return FakeResponse('{"full": {}}')
+            return FakeUrlResponse('{"full": {}}')
         if "tree/main" in url:
-            return FakeResponse("[]")
-        return FakeResponse("")
+            return FakeUrlResponse("[]")
+        return FakeUrlResponse("")
 
     monkeypatch.setattr(urllib.request, "urlopen", mock_urlopen)
 
@@ -459,18 +447,8 @@ def test_refresh_provider_models_merges_openrouter_metadata(monkeypatch):
         }]
     })
 
-    class FakeResponse:
-        def __init__(self, data):
-            self._data = data.encode()
-        def read(self):
-            return self._data
-        def __enter__(self):
-            return self
-        def __exit__(self, *a):
-            pass
-
     def mock_urlopen(req, timeout=None):
-        return FakeResponse(fake_data)
+        return FakeUrlResponse(fake_data)
 
     monkeypatch.setattr(urllib.request, "urlopen", mock_urlopen)
 
@@ -548,18 +526,8 @@ def test_fetch_openrouter_models_returns_metadata(monkeypatch):
         ]
     })
 
-    class FakeResponse:
-        def __init__(self, data):
-            self._data = data.encode()
-        def read(self):
-            return self._data
-        def __enter__(self):
-            return self
-        def __exit__(self, *a):
-            pass
-
     def mock_urlopen(req, timeout=None):
-        return FakeResponse(fake_response_data)
+        return FakeUrlResponse(fake_response_data)
 
     monkeypatch.setattr(urllib.request, "urlopen", mock_urlopen)
 
@@ -600,21 +568,11 @@ def test_fetch_openrouter_models_zdr_returns_metadata_for_zdr_models(monkeypatch
         ]
     })
 
-    class FakeResponse:
-        def __init__(self, data):
-            self._data = data.encode()
-        def read(self):
-            return self._data
-        def __enter__(self):
-            return self
-        def __exit__(self, *a):
-            pass
-
     def mock_urlopen(req, timeout=None):
         url = req.full_url if hasattr(req, "full_url") else str(req)
         if "endpoints/zdr" in url:
-            return FakeResponse(fake_zdr)
-        return FakeResponse(fake_public)
+            return FakeUrlResponse(fake_zdr)
+        return FakeUrlResponse(fake_public)
 
     monkeypatch.setattr(urllib.request, "urlopen", mock_urlopen)
 
@@ -640,3 +598,89 @@ def test_fetch_openrouter_models_zdr_returns_metadata_for_zdr_models(monkeypatch
 ])
 def test_normalize_model_name(input_name, expected):
     assert server._normalize_model_name(input_name) == expected
+
+
+def test_resolve_model_discovery_fallback_by_elo(monkeypatch):
+    """Shorthand falls back to discovered models, picking highest Elo."""
+    monkeypatch.setattr(server, "_annotations", {
+        "openai/gpt-4o": {"metadata": {"arena_elo": 1200}},
+        "openai/gpt-5.2": {"metadata": {"arena_elo": 1486}},
+        "openai/gpt-5.4": {"metadata": {"arena_elo": 1510}},
+    })
+    monkeypatch.setattr(server, "_provider_registry", {"openai": "sk-test"})
+    monkeypatch.setattr(
+        server, "_get_models",
+        lambda provider=None, *, zdr=None: [
+            "openai/gpt-4o", "openai/gpt-5.2", "openai/gpt-5.4",
+        ],
+    )
+    # No favourites — empty usage
+    full_id, api_key = server._resolve_model("openai")
+    assert full_id == "openai/gpt-5.4"
+    assert api_key == "sk-test"
+
+
+def test_resolve_model_discovery_fallback_elo_tiebreak(monkeypatch):
+    """On equal Elo, discovery fallback picks first alphabetically."""
+    monkeypatch.setattr(server, "_annotations", {
+        "openai/model-b": {"metadata": {"arena_elo": 1400}},
+        "openai/model-a": {"metadata": {"arena_elo": 1400}},
+    })
+    monkeypatch.setattr(server, "_provider_registry", {"openai": "sk-test"})
+    monkeypatch.setattr(
+        server, "_get_models",
+        lambda provider=None, *, zdr=None: [
+            "openai/model-a", "openai/model-b",
+        ],
+    )
+    full_id, _ = server._resolve_model("openai")
+    assert full_id == "openai/model-a"
+
+
+def test_resolve_model_no_match_raises(monkeypatch):
+    """Unknown shorthand raises ValueError with helpful message."""
+    monkeypatch.setattr(server, "_annotations", {})
+    monkeypatch.setattr(server, "_provider_registry", {"openai": "sk-test"})
+    monkeypatch.setattr(
+        server, "_get_models",
+        lambda provider=None, *, zdr=None: ["openai/gpt-5.2"],
+    )
+    with pytest.raises(ValueError, match="No models found matching 'nonexistent'"):
+        server._resolve_model("nonexistent")
+
+
+def test_resolve_model_full_id_direct(monkeypatch):
+    """Full model ID routes directly without needing favourites or discovery."""
+    monkeypatch.setattr(server, "_annotations", {})
+    monkeypatch.setattr(server, "_provider_registry", {"openai": "sk-test"})
+    full_id, api_key = server._resolve_model("openai/gpt-5.2")
+    assert full_id == "openai/gpt-5.2"
+    assert api_key == "sk-test"
+
+
+def test_build_instructions_includes_elo_section(monkeypatch):
+    """Instructions include top-rated models by Elo."""
+    monkeypatch.setattr(server, "_annotations", {
+        "openai/gpt-5.4": {"metadata": {"arena_elo": 1510}},
+        "openai/gpt-5.2": {"metadata": {"arena_elo": 1486}},
+        "gemini/gemini-3.5-pro": {"metadata": {"arena_elo": 1497}},
+    })
+    instructions = server._build_instructions()
+    assert "Top Rated Models (by Elo):" in instructions
+    assert "Elo 1510" in instructions
+    assert "Elo 1497" in instructions
+    # Verify ordering: 1510 appears before 1497
+    assert instructions.index("Elo 1510") < instructions.index("Elo 1497")
+
+
+def test_build_instructions_elo_and_favourites_coexist(monkeypatch):
+    """Instructions show both favourites and top-rated sections."""
+    monkeypatch.setattr(server, "_annotations", {
+        "openai/gpt-5.2": {
+            "metadata": {"arena_elo": 1486},
+            "usage": {"call_count": 10, "last_used": "2026-03-12T00:00:00Z"},
+        },
+    })
+    instructions = server._build_instructions()
+    assert "Favourite Models:" in instructions
+    assert "Top Rated Models (by Elo):" in instructions

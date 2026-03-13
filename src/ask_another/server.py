@@ -236,7 +236,7 @@ def _configure_logging() -> None:
 
     Env vars:
         LOG_LEVEL: DEBUG, INFO, WARNING, ERROR. Empty = disabled.
-        LOG_FILE: Path to log file (default: ~/.ask-another-debug.log).
+        LOG_FILE: Path to log file (default: ~/.ask-another.log).
         LOG_FILE_SIZE: Max file size in MB (default: 5).
         LOG_FILE_COUNT: Number of backup files (default: 2).
     """
@@ -655,7 +655,7 @@ def _resolve_model(model: str) -> tuple[str, str]:
         # Pick highest Elo, falling back to first alphabetically
         def _elo(m: str) -> float:
             return _annotations.get(m, {}).get("metadata", {}).get("arena_elo", 0)
-        best = max(candidates, key=lambda m: (_elo(m), m))
+        best = sorted(candidates, key=lambda m: (-_elo(m), m))[0]
         for provider, api_key in _provider_registry.items():
             if best.startswith(f"{provider}/"):
                 logger.debug(
