@@ -625,8 +625,9 @@ def _resolve_model(model: str) -> tuple[str, str]:
     """Resolve a model identifier or shorthand to (full_id, api_key).
 
     Resolution order:
-    1. Shorthand: if any favourite starts with model/, resolve via favourites
+    1. Shorthand via favourites (most-used match wins)
     2. Full identifier: route directly by matching provider prefix
+    3. Shorthand via all discovered models (highest Elo wins, else first alphabetically)
     """
     # Try shorthand resolution against favourites first
     favourites = _get_favourites(_annotations)
@@ -647,10 +648,26 @@ def _resolve_model(model: str) -> tuple[str, str]:
                 logger.debug("Resolved full model ID '%s' (provider=%s)", model, provider)
                 return model, api_key
 
+    # Shorthand fallback: search all discovered models for the prefix
+    all_models = _get_models()
+    candidates = [m for m in all_models if m.startswith(f"{model}/")]
+    if candidates:
+        # Pick highest Elo, falling back to first alphabetically
+        def _elo(m: str) -> float:
+            return _annotations.get(m, {}).get("metadata", {}).get("arena_elo", 0)
+        best = max(candidates, key=lambda m: (_elo(m), m))
+        for provider, api_key in _provider_registry.items():
+            if best.startswith(f"{provider}/"):
+                logger.debug(
+                    "Resolved shorthand '%s' -> %s via discovery (provider=%s)",
+                    model, best, provider,
+                )
+                return best, api_key
+
     logger.warning("Model resolution failed for '%s'", model)
-    fav_list = ", ".join(favourites) if favourites else "(none — use the MCP to build usage)"
     raise ValueError(
-        f"No favourite matches '{model}'. Available favourites: {fav_list}"
+        f"No models found matching '{model}'. "
+        f"Use search_models to find valid model identifiers."
     )
 
 
