@@ -632,19 +632,13 @@ def _resolve_model(model: str) -> tuple[str, str]:
     favourites = _get_favourites(_annotations)
     matches = [fav for fav in favourites if fav.startswith(f"{model}/")]
 
-    if len(matches) == 1:
+    if matches:
+        # Multiple matches? Pick the most-used (favourites are sorted by call_count desc)
         fav = matches[0]
         for provider, api_key in _provider_registry.items():
             if fav.startswith(f"{provider}/"):
                 logger.debug("Resolved shorthand '%s' -> %s (provider=%s)", model, fav, provider)
                 return fav, api_key
-
-    if len(matches) > 1:
-        match_list = ", ".join(matches)
-        raise ValueError(
-            f"Ambiguous shorthand '{model}' matches multiple favourites: {match_list}. "
-            f"Use a more specific shorthand (e.g. '{_get_family(matches[0])}')"
-        )
 
     # Full identifier: route directly
     if "/" in model:
