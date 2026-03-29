@@ -413,6 +413,9 @@ def _get_models(provider: str | None = None, *, zdr: bool | None = None) -> list
         if p not in _provider_registry:
             continue
 
+        if _provider_errors.get(p):
+            continue
+
         cache_key = f"{p}:zdr={effective_zdr}" if p == "openrouter" else p
 
         if cache_key in _model_cache:

@@ -43,3 +43,24 @@ def test_empty_models_stores_error(monkeypatch):
     monkeypatch.setattr(server, "_fetch_models", lambda p, k, zdr=False: [])
     server._refresh_provider_models()
     assert server._provider_errors["gemini"] == "No models returned"
+
+
+def test_get_models_skips_unhealthy_providers(monkeypatch):
+    """_get_models excludes providers with errors."""
+    monkeypatch.setattr(server, "_provider_registry", {
+        "openai": "sk-good",
+        "gemini": "bad-key",
+    })
+    monkeypatch.setattr(server, "_provider_errors", {
+        "openai": None,
+        "gemini": "Google API key is required",
+    })
+    monkeypatch.setattr(server, "_model_cache", {
+        "openai": (["openai/gpt-5.2"], 9999999999.0),
+    })
+    monkeypatch.setattr(server, "_cache_ttl_minutes", 360)
+    monkeypatch.setattr(server, "_zero_data_retention", True)
+
+    models = server._get_models()
+    assert "openai/gpt-5.2" in models
+    assert not any(m.startswith("gemini/") for m in models)
