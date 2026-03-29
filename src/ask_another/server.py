@@ -17,12 +17,16 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
-from typing import Any
+from collections.abc import AsyncIterator
+from typing import Any, cast
 
 logger = logging.getLogger(__name__)
 
 import anyio
+import anyio.abc
+import anyio.to_thread
 from mcp.server.fastmcp import Context, FastMCP
+from mcp.types import ToolAnnotations
 
 # In-memory annotations: {model_id: {metadata: {...}, usage: {...}, annotations: {...}}}
 _annotations: dict[str, dict] = {}
@@ -167,7 +171,7 @@ class ResearchJob:
     status: str = "in_progress"  # in_progress | completed | failed | cancelled
     started: str = ""
     ended: str = ""
-    result: str = ""
+    result: str | None = None
     citations: list[str] = field(default_factory=list)
     error: str = ""
     _task_scope: anyio.CancelScope | None = field(default=None, repr=False)
@@ -200,7 +204,7 @@ class JobStore:
 
 
 @asynccontextmanager
-async def _lifespan(server: FastMCP) -> Any:
+async def _lifespan(server: FastMCP) -> AsyncIterator[dict[str, Any]]:
     """Lifespan context: populate caches and enrich on startup."""
     async with anyio.create_task_group() as tg:
         # Startup enrichment (run in thread to not block)
@@ -967,10 +971,10 @@ def refresh_models() -> str:
 
 
 @mcp.tool(
-    annotations={
-        "readOnlyHint": True,
-        "idempotentHint": True,
-    }
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        idempotentHint=True,
+    )
 )
 def feedback(
     issue: str,
@@ -1028,6 +1032,8 @@ def completion(
                      Some models reject non-default values — omit unless needed.
     """
     import litellm
+    from litellm.exceptions import AuthenticationError
+    from litellm.types.utils import Choices, ModelResponse
 
     full_model, api_key = _resolve_model(model)
 
@@ -1067,8 +1073,8 @@ def completion(
 
     logger.debug("Calling litellm.completion(model=%s)", full_model)
     try:
-        response = litellm.completion(**kwargs)
-    except litellm.AuthenticationError as exc:
+        response = cast(ModelResponse, litellm.completion(**kwargs))
+    except AuthenticationError as exc:
         _provider_errors[provider] = str(exc)
         _provider_auth_errors.add(provider)
         logger.warning("Auth failed for %s, provider marked unhealthy: %s", provider, exc)
@@ -1078,7 +1084,8 @@ def completion(
     # Track usage
     _track_usage(full_model)
 
-    return response.choices[0].message.content
+    choice = cast(Choices, response.choices[0])
+    return choice.message.content or ""
 
 
 @mcp.tool()
@@ -1112,6 +1119,8 @@ def generate_image(
                  the model's default.
     """
     import litellm
+    from litellm.exceptions import AuthenticationError
+    from litellm.types.utils import Choices, ImageResponse, ModelResponse
 
     from mcp.types import ImageContent, TextContent
 
@@ -1132,8 +1141,8 @@ def generate_image(
             full_model,
         )
         try:
-            response = litellm.completion(**kwargs)
-        except litellm.AuthenticationError as exc:
+            response = cast(ModelResponse, litellm.completion(**kwargs))
+        except AuthenticationError as exc:
             _provider_errors[provider] = str(exc)
             _provider_auth_errors.add(provider)
             logger.warning("Auth failed for %s, provider marked unhealthy: %s", provider, exc)
@@ -1142,11 +1151,12 @@ def generate_image(
 
         result_blocks: list = []
 
-        text = response.choices[0].message.content
+        choice = cast(Choices, response.choices[0])
+        text: str | None = choice.message.content
         if text:
             result_blocks.append(TextContent(type="text", text=text))
 
-        images = getattr(response.choices[0].message, "images", None) or []
+        images: list = getattr(choice.message, "images", None) or []
         if not images:
             raise ValueError(
                 f"Model {full_model} returned no images. "
@@ -1182,14 +1192,16 @@ def generate_image(
 
     logger.debug("Calling litellm.image_generation(model=%s)", full_model)
     try:
-        response = litellm.image_generation(**kwargs)
-    except litellm.AuthenticationError as exc:
+        response = cast(ImageResponse, litellm.image_generation(**kwargs))
+    except AuthenticationError as exc:
         _provider_errors[provider] = str(exc)
         _provider_auth_errors.add(provider)
         logger.warning("Auth failed for %s, provider marked unhealthy: %s", provider, exc)
         raise
     logger.debug("Image generation response received from %s", full_model)
 
+    if not response.data:
+        raise ValueError(f"Model {full_model} returned no image data.")
     img_obj = response.data[0]
     b64_data, mime_type = _extract_image_b64(
         getattr(img_obj, "b64_json", None),
@@ -1213,8 +1225,10 @@ def generate_image(
     return result_blocks
 
 
-def _get_job_store(ctx: Context) -> JobStore:
+def _get_job_store(ctx: Context | None) -> JobStore:
     """Extract the JobStore from a tool's Context."""
+    if ctx is None:
+        raise RuntimeError("Context required for research operations")
     return ctx.request_context.lifespan_context["job_store"]
 
 
@@ -1303,6 +1317,8 @@ def _save_image(b64_data: str, mime_type: str, prompt: str) -> Path:
 def _run_research_completion_sync(job: ResearchJob, api_key: str) -> None:
     """Execute a research task via litellm.completion (blocking)."""
     import litellm
+    from litellm.exceptions import AuthenticationError
+    from litellm.types.utils import Choices, ModelResponse
 
     kwargs: dict[str, Any] = {
         "model": job.model,
@@ -1317,12 +1333,13 @@ def _run_research_completion_sync(job: ResearchJob, api_key: str) -> None:
 
     logger.info("Research job %d starting: model=%s", job.job_id, job.model)
     try:
-        response = litellm.completion(**kwargs)
-        job.result = response.choices[0].message.content
+        response = cast(ModelResponse, litellm.completion(**kwargs))
+        choice = cast(Choices, response.choices[0])
+        job.result = choice.message.content
         job.citations = getattr(response, "citations", []) or []
         job.status = "completed"
         logger.info("Research job %d completed", job.job_id)
-    except litellm.AuthenticationError as exc:
+    except AuthenticationError as exc:
         provider = job.model.split("/")[0]
         _provider_errors[provider] = str(exc)
         _provider_auth_errors.add(provider)
@@ -1345,26 +1362,28 @@ async def _run_research_completion(job: ResearchJob, api_key: str) -> None:
 def _run_research_gemini_sync(job: ResearchJob, api_key: str) -> None:
     """Execute a research task via Gemini Interactions API (blocking poll loop)."""
     import litellm.interactions
+    from litellm.exceptions import AuthenticationError
+    from litellm.types.interactions import InteractionsAPIResponse
 
     agent_name = job.model.split("/", 1)[1]  # strip "gemini/" prefix
 
     logger.info("Gemini research job %d starting: agent=%s", job.job_id, agent_name)
     try:
-        response = litellm.interactions.create(
+        response = cast(InteractionsAPIResponse, litellm.interactions.create(
             agent=agent_name,
             input=job.query,
             background=True,
             api_key=api_key,
-        )
-        interaction_id = response.id
+        ))
+        interaction_id = response.id or ""
         logger.debug("Gemini interaction created: id=%s", interaction_id)
 
         # Poll until complete or failed
         while True:
-            status_resp = litellm.interactions.get(
+            status_resp = cast(InteractionsAPIResponse, litellm.interactions.get(
                 interaction_id=interaction_id,
                 api_key=api_key,
-            )
+            ))
             logger.debug("Gemini poll: status=%s", status_resp.status)
             if status_resp.status == "completed":
                 outputs = status_resp.outputs or []
@@ -1387,7 +1406,7 @@ def _run_research_gemini_sync(job: ResearchJob, api_key: str) -> None:
 
             time.sleep(10)
 
-    except litellm.AuthenticationError as exc:
+    except AuthenticationError as exc:
         provider = job.model.split("/")[0]
         _provider_errors[provider] = str(exc)
         _provider_auth_errors.add(provider)
@@ -1417,7 +1436,7 @@ async def start_research(
     model: str,
     query: str,
     timeout: int = 300,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Start a deep research task. This submits a research query to a model
     that will search the web, read sources, and synthesize a cited report.
@@ -1482,7 +1501,7 @@ async def start_research(
 @mcp.tool()
 async def check_research(
     job_id: int | None = None,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Check on research tasks started with start_research.
 
@@ -1535,7 +1554,7 @@ async def check_research(
 @mcp.tool()
 async def cancel_research(
     job_id: int,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Cancel a running research task. Use check_research first to find
     the job_id of the task you want to cancel.
