@@ -1108,6 +1108,7 @@ def generate_image(
     from mcp.types import ImageContent, TextContent
 
     full_model, api_key = _resolve_model(model)
+    provider = full_model.split("/")[0]
 
     if _is_native_image_model(full_model):
         # Completion path with image modalities (Nano Banana, etc.)
@@ -1122,7 +1123,12 @@ def generate_image(
             "Calling litellm.completion(model=%s, modalities=[image,text])",
             full_model,
         )
-        response = litellm.completion(**kwargs)
+        try:
+            response = litellm.completion(**kwargs)
+        except litellm.AuthenticationError as exc:
+            _provider_errors[provider] = str(exc)
+            logger.warning("Auth failed for %s, provider marked unhealthy: %s", provider, exc)
+            raise
         logger.debug("Image completion response received from %s", full_model)
 
         result_blocks: list = []
@@ -1166,7 +1172,12 @@ def generate_image(
         kwargs["quality"] = quality
 
     logger.debug("Calling litellm.image_generation(model=%s)", full_model)
-    response = litellm.image_generation(**kwargs)
+    try:
+        response = litellm.image_generation(**kwargs)
+    except litellm.AuthenticationError as exc:
+        _provider_errors[provider] = str(exc)
+        logger.warning("Auth failed for %s, provider marked unhealthy: %s", provider, exc)
+        raise
     logger.debug("Image generation response received from %s", full_model)
 
     img_obj = response.data[0]
@@ -1301,6 +1312,12 @@ def _run_research_completion_sync(job: ResearchJob, api_key: str) -> None:
         job.citations = getattr(response, "citations", []) or []
         job.status = "completed"
         logger.info("Research job %d completed", job.job_id)
+    except litellm.AuthenticationError as exc:
+        provider = job.model.split("/")[0]
+        _provider_errors[provider] = str(exc)
+        logger.warning("Auth failed for %s, provider marked unhealthy: %s", provider, exc)
+        job.status = "failed"
+        job.error = str(exc)
     except Exception as exc:
         job.status = "failed"
         job.error = str(exc)

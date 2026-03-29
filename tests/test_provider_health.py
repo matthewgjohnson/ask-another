@@ -191,6 +191,112 @@ def test_full_flow_healthy_and_unhealthy(monkeypatch):
     assert "gemini: API key invalid" in instructions
 
 
+def test_generate_image_auth_error_marks_provider_unhealthy(monkeypatch):
+    """An auth error during image generation marks the provider unhealthy."""
+    monkeypatch.setattr(server, "_provider_registry", {"openai": "bad-key"})
+    monkeypatch.setattr(server, "_provider_errors", {"openai": None})
+    monkeypatch.setattr(server, "_model_cache", {
+        "openai": (["openai/gpt-image-1"], 9999999999.0),
+    })
+    monkeypatch.setattr(server, "_cache_ttl_minutes", 360)
+    monkeypatch.setattr(server, "_zero_data_retention", True)
+    monkeypatch.setattr(server, "_annotations", {})
+    monkeypatch.setattr(
+        server, "_resolve_model",
+        lambda m: ("openai/gpt-image-1", "bad-key"),
+    )
+    monkeypatch.setattr(
+        server, "_get_models",
+        lambda provider=None, *, zdr=None: ["openai/gpt-image-1"],
+    )
+
+    import litellm
+
+    def _fail_auth(**kwargs):
+        raise litellm.AuthenticationError(
+            message="Invalid API key",
+            llm_provider="openai",
+            model="openai/gpt-image-1",
+        )
+
+    monkeypatch.setattr(litellm, "image_generation", _fail_auth)
+
+    import pytest
+    with pytest.raises(litellm.AuthenticationError):
+        server.generate_image(model="openai/gpt-image-1", prompt="a cat")
+
+    assert server._provider_errors["openai"] is not None
+    assert "Authentication" in server._provider_errors["openai"]
+
+
+def test_generate_image_native_auth_error_marks_provider_unhealthy(monkeypatch):
+    """An auth error on the native image model completion path marks provider unhealthy."""
+    monkeypatch.setattr(server, "_provider_registry", {"gemini": "bad-key"})
+    monkeypatch.setattr(server, "_provider_errors", {"gemini": None})
+    monkeypatch.setattr(server, "_model_cache", {
+        "gemini": (["gemini/gemini-2.5-flash-image"], 9999999999.0),
+    })
+    monkeypatch.setattr(server, "_cache_ttl_minutes", 360)
+    monkeypatch.setattr(server, "_zero_data_retention", True)
+    monkeypatch.setattr(server, "_annotations", {})
+    monkeypatch.setattr(
+        server, "_resolve_model",
+        lambda m: ("gemini/gemini-2.5-flash-image", "bad-key"),
+    )
+    monkeypatch.setattr(
+        server, "_get_models",
+        lambda provider=None, *, zdr=None: ["gemini/gemini-2.5-flash-image"],
+    )
+
+    import litellm
+
+    def _fail_auth(**kwargs):
+        raise litellm.AuthenticationError(
+            message="API key invalid",
+            llm_provider="gemini",
+            model="gemini/gemini-2.5-flash-image",
+        )
+
+    monkeypatch.setattr(litellm, "completion", _fail_auth)
+
+    import pytest
+    with pytest.raises(litellm.AuthenticationError):
+        server.generate_image(model="gemini/gemini-2.5-flash-image", prompt="a cat")
+
+    assert server._provider_errors["gemini"] is not None
+    assert "Authentication" in server._provider_errors["gemini"]
+
+
+def test_research_auth_error_marks_provider_unhealthy(monkeypatch):
+    """An auth error during research marks the provider unhealthy."""
+    from ask_another.server import ResearchJob
+
+    monkeypatch.setattr(server, "_provider_registry", {"openrouter": "bad-key"})
+    monkeypatch.setattr(server, "_provider_errors", {"openrouter": None})
+
+    import litellm
+
+    def _fail_auth(**kwargs):
+        raise litellm.AuthenticationError(
+            message="Missing Authentication header",
+            llm_provider="openrouter",
+            model="openrouter/perplexity/sonar-deep-research",
+        )
+
+    monkeypatch.setattr(litellm, "completion", _fail_auth)
+
+    job = ResearchJob(
+        job_id=99,
+        model="openrouter/perplexity/sonar-deep-research",
+        query="test",
+    )
+    server._run_research_completion_sync(job, "bad-key")
+
+    assert job.status == "failed"
+    assert server._provider_errors["openrouter"] is not None
+    assert "Authentication" in server._provider_errors["openrouter"]
+
+
 def test_completion_auth_error_marks_provider_unhealthy(monkeypatch):
     """An auth error during completion marks the provider unhealthy."""
     monkeypatch.setattr(server, "_provider_registry", {"openrouter": "bad-key"})
