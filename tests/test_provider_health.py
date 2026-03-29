@@ -105,3 +105,43 @@ def test_build_instructions_shows_unavailable_providers(monkeypatch):
     instructions = server._build_instructions()
     assert "Unavailable Providers:" in instructions
     assert "gemini: Google API key is required" in instructions
+
+
+def test_search_models_retries_unhealthy_provider(monkeypatch):
+    """Searching for an unhealthy provider triggers a retry."""
+    monkeypatch.setattr(server, "_provider_registry", {"gemini": "fixed-key"})
+    monkeypatch.setattr(server, "_provider_errors", {
+        "gemini": "API key invalid",
+    })
+    monkeypatch.setattr(server, "_model_cache", {})
+    monkeypatch.setattr(server, "_cache_ttl_minutes", 360)
+    monkeypatch.setattr(server, "_zero_data_retention", True)
+    monkeypatch.setattr(server, "_annotations", {})
+
+    # Retry succeeds
+    monkeypatch.setattr(
+        server, "_fetch_models", lambda p, k, zdr=False: ["gemini/gemini-3.1-pro"]
+    )
+    result = server.search_models(search="gemini")
+    assert "gemini/gemini-3.1-pro" in result
+    assert server._provider_errors.get("gemini") is None
+
+
+def test_search_models_shows_error_on_retry_failure(monkeypatch):
+    """If retry still fails, error message is shown in results."""
+    monkeypatch.setattr(server, "_provider_registry", {"gemini": "bad-key"})
+    monkeypatch.setattr(server, "_provider_errors", {
+        "gemini": "API key invalid",
+    })
+    monkeypatch.setattr(server, "_model_cache", {})
+    monkeypatch.setattr(server, "_cache_ttl_minutes", 360)
+    monkeypatch.setattr(server, "_zero_data_retention", True)
+    monkeypatch.setattr(server, "_annotations", {})
+
+    def _fail(p, k, zdr=False):
+        raise Exception("Still broken")
+
+    monkeypatch.setattr(server, "_fetch_models", _fail)
+    result = server.search_models(search="gemini")
+    assert "gemini" in result
+    assert "Still broken" in result

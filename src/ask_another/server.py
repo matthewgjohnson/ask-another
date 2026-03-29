@@ -467,6 +467,45 @@ def _refresh_provider_models() -> None:
             logger.warning("Failed to refresh models for %s: %s", provider, exc)
 
 
+def _retry_unhealthy_providers(search: str, *, zdr: bool | None = None) -> str | None:
+    """Re-attempt fetch for unhealthy providers matching a search term.
+
+    Returns a warning string if any provider was retried and still failed,
+    or None if all retries succeeded (or no retries were needed).
+    """
+    effective_zdr = zdr if zdr is not None else _zero_data_retention
+    warnings = []
+    for provider, err in list(_provider_errors.items()):
+        if not err:
+            continue
+        if search.lower() not in provider.lower() and provider.lower() not in search.lower():
+            continue
+        # Retry
+        cache_key = f"{provider}:zdr={effective_zdr}" if provider == "openrouter" else provider
+        try:
+            if provider == "openrouter":
+                models, or_metadata = _fetch_openrouter_models(
+                    _provider_registry[provider], zdr=effective_zdr
+                )
+                for model_id, meta in or_metadata.items():
+                    entry = _annotations.setdefault(model_id, {})
+                    entry.setdefault("metadata", {}).update(meta)
+            else:
+                models = _fetch_models(provider, _provider_registry[provider], zdr=effective_zdr)
+            if models:
+                _model_cache[cache_key] = (models, time.time())
+                _provider_errors[provider] = None
+                logger.info("Retry succeeded for %s: %d models", provider, len(models))
+            else:
+                _provider_errors[provider] = "No models returned"
+                warnings.append(f"⚠️ {provider} is configured but unavailable: No models returned")
+        except Exception as exc:
+            _provider_errors[provider] = str(exc)
+            warnings.append(f"⚠️ {provider} is configured but unavailable: {exc}")
+            logger.warning("Retry failed for %s: %s", provider, exc)
+    return "\n".join(warnings) if warnings else None
+
+
 def _startup_enrich() -> None:
     """Refresh provider models and fetch benchmark data."""
     _refresh_provider_models()
@@ -821,6 +860,10 @@ def search_families(
              only. Defaults to the server's ZERO_DATA_RETENTION setting.
              Set explicitly to override.
     """
+    retry_warning = None
+    if search:
+        retry_warning = _retry_unhealthy_providers(search, zdr=zdr)
+
     all_models = _get_models(zdr=zdr)
     families = sorted(set(_get_family(m) for m in all_models))
 
@@ -828,7 +871,10 @@ def search_families(
         families = [f for f in families if search.lower() in f.lower()]
 
     result = "\n".join(families)
-    return _zdr_warning(zdr, result)
+    result = _zdr_warning(zdr, result)
+    if retry_warning:
+        result = f"{result}\n\n{retry_warning}" if result else retry_warning
+    return result
 
 
 @mcp.tool()
@@ -845,6 +891,10 @@ def search_models(
              only. Defaults to the server's ZERO_DATA_RETENTION setting.
              Set explicitly to override.
     """
+    retry_warning = None
+    if search:
+        retry_warning = _retry_unhealthy_providers(search, zdr=zdr)
+
     models = _get_models(zdr=zdr)
 
     if search:
@@ -871,7 +921,10 @@ def search_models(
         else:
             lines.append(m)
     result = "\n".join(lines)
-    return _zdr_warning(zdr, result)
+    result = _zdr_warning(zdr, result)
+    if retry_warning:
+        result = f"{result}\n\n{retry_warning}" if result else retry_warning
+    return result
 
 
 @mcp.tool()
