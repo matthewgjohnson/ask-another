@@ -143,6 +143,9 @@ _zero_data_retention: bool = True
 # Provider health: None = healthy, str = error message
 _provider_errors: dict[str, str | None] = {}
 
+# Providers that failed with auth errors at runtime (not retryable via discovery)
+_provider_auth_errors: set[str] = set()
+
 # Feedback log path
 _feedback_log: Path = Path(
     os.environ.get("FEEDBACK_LOG", os.path.expanduser("~/.ask-another-feedback.jsonl"))
@@ -279,12 +282,13 @@ def _configure_logging() -> None:
 
 def _load_config() -> None:
     """Scan environment and populate provider registry and cache TTL."""
-    global _provider_registry, _cache_ttl_minutes, _zero_data_retention, _annotations, _provider_errors
+    global _provider_registry, _cache_ttl_minutes, _zero_data_retention, _annotations, _provider_errors, _provider_auth_errors
 
     _configure_logging()
 
     _provider_registry = {}
     _provider_errors = {}
+    _provider_auth_errors = set()
     provider_pattern = re.compile(r"^PROVIDER_\w+$")
 
     for var_name, value in os.environ.items():
@@ -477,6 +481,9 @@ def _retry_unhealthy_providers(search: str, *, zdr: bool | None = None) -> str |
     warnings = []
     for provider, err in list(_provider_errors.items()):
         if not err:
+            continue
+        if provider in _provider_auth_errors:
+            warnings.append(f"⚠️ {provider} is configured but unavailable: {err}")
             continue
         if search.lower() not in provider.lower() and provider.lower() not in search.lower():
             continue
@@ -1063,6 +1070,7 @@ def completion(
         response = litellm.completion(**kwargs)
     except litellm.AuthenticationError as exc:
         _provider_errors[provider] = str(exc)
+        _provider_auth_errors.add(provider)
         logger.warning("Auth failed for %s, provider marked unhealthy: %s", provider, exc)
         raise
     logger.debug("Completion response received from %s", full_model)
@@ -1127,6 +1135,7 @@ def generate_image(
             response = litellm.completion(**kwargs)
         except litellm.AuthenticationError as exc:
             _provider_errors[provider] = str(exc)
+            _provider_auth_errors.add(provider)
             logger.warning("Auth failed for %s, provider marked unhealthy: %s", provider, exc)
             raise
         logger.debug("Image completion response received from %s", full_model)
@@ -1176,6 +1185,7 @@ def generate_image(
         response = litellm.image_generation(**kwargs)
     except litellm.AuthenticationError as exc:
         _provider_errors[provider] = str(exc)
+        _provider_auth_errors.add(provider)
         logger.warning("Auth failed for %s, provider marked unhealthy: %s", provider, exc)
         raise
     logger.debug("Image generation response received from %s", full_model)
@@ -1315,6 +1325,7 @@ def _run_research_completion_sync(job: ResearchJob, api_key: str) -> None:
     except litellm.AuthenticationError as exc:
         provider = job.model.split("/")[0]
         _provider_errors[provider] = str(exc)
+        _provider_auth_errors.add(provider)
         logger.warning("Auth failed for %s, provider marked unhealthy: %s", provider, exc)
         job.status = "failed"
         job.error = str(exc)
@@ -1379,6 +1390,7 @@ def _run_research_gemini_sync(job: ResearchJob, api_key: str) -> None:
     except litellm.AuthenticationError as exc:
         provider = job.model.split("/")[0]
         _provider_errors[provider] = str(exc)
+        _provider_auth_errors.add(provider)
         logger.warning("Auth failed for %s, provider marked unhealthy: %s", provider, exc)
         job.status = "failed"
         job.error = str(exc)

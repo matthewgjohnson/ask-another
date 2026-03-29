@@ -364,3 +364,28 @@ def test_completion_auth_error_marks_provider_unhealthy(monkeypatch):
 
     assert server._provider_errors["openrouter"] is not None
     assert "Authentication" in server._provider_errors["openrouter"]
+    assert "openrouter" in server._provider_auth_errors
+
+
+def test_auth_error_prevents_retry_on_search(monkeypatch):
+    """A provider marked with an auth error is not retried by search discovery."""
+    monkeypatch.setattr(server, "_provider_registry", {"openrouter": "bad-key"})
+    monkeypatch.setattr(server, "_provider_errors", {
+        "openrouter": "AuthenticationError: Missing Authentication header",
+    })
+    monkeypatch.setattr(server, "_provider_auth_errors", {"openrouter"})
+    monkeypatch.setattr(server, "_model_cache", {})
+    monkeypatch.setattr(server, "_cache_ttl_minutes", 360)
+    monkeypatch.setattr(server, "_zero_data_retention", True)
+    monkeypatch.setattr(server, "_annotations", {})
+
+    # _fetch_models should NOT be called — if it is, this will fail
+    def _should_not_be_called(p, k, zdr=False):
+        raise AssertionError("Should not retry auth-errored provider")
+
+    monkeypatch.setattr(server, "_fetch_models", _should_not_be_called)
+
+    result = server.search_models(search="openrouter")
+    assert "openrouter" in result
+    assert "unavailable" in result.lower()
+    assert server._provider_errors["openrouter"] is not None
