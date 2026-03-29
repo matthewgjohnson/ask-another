@@ -135,6 +135,9 @@ _cache_ttl_minutes: int = 360
 # Whether to filter OpenRouter models to ZDR-compatible only (default: on)
 _zero_data_retention: bool = True
 
+# Provider health: None = healthy, str = error message
+_provider_errors: dict[str, str | None] = {}
+
 # Feedback log path
 _feedback_log: Path = Path(
     os.environ.get("FEEDBACK_LOG", os.path.expanduser("~/.ask-another-feedback.jsonl"))
@@ -271,11 +274,12 @@ def _configure_logging() -> None:
 
 def _load_config() -> None:
     """Scan environment and populate provider registry and cache TTL."""
-    global _provider_registry, _cache_ttl_minutes, _zero_data_retention, _annotations
+    global _provider_registry, _cache_ttl_minutes, _zero_data_retention, _annotations, _provider_errors
 
     _configure_logging()
 
     _provider_registry = {}
+    _provider_errors = {}
     provider_pattern = re.compile(r"^PROVIDER_\w+$")
 
     for var_name, value in os.environ.items():
@@ -445,8 +449,13 @@ def _refresh_provider_models() -> None:
                 models = _fetch_models(provider, api_key, zdr=effective_zdr)
             if models:
                 _model_cache[cache_key] = (models, time.time())
+                _provider_errors[provider] = None
                 logger.info("Cached %d models for %s", len(models), provider)
+            else:
+                _provider_errors[provider] = "No models returned"
+                logger.warning("Provider %s returned no models", provider)
         except Exception as exc:
+            _provider_errors[provider] = str(exc)
             logger.warning("Failed to refresh models for %s: %s", provider, exc)
 
 
