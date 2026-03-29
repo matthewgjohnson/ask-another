@@ -1376,6 +1376,12 @@ def _run_research_gemini_sync(job: ResearchJob, api_key: str) -> None:
 
             time.sleep(10)
 
+    except litellm.AuthenticationError as exc:
+        provider = job.model.split("/")[0]
+        _provider_errors[provider] = str(exc)
+        logger.warning("Auth failed for %s, provider marked unhealthy: %s", provider, exc)
+        job.status = "failed"
+        job.error = str(exc)
     except Exception as exc:
         job.status = "failed"
         job.error = str(exc)

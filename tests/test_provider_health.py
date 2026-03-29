@@ -297,6 +297,37 @@ def test_research_auth_error_marks_provider_unhealthy(monkeypatch):
     assert "Authentication" in server._provider_errors["openrouter"]
 
 
+def test_gemini_research_auth_error_marks_provider_unhealthy(monkeypatch):
+    """An auth error during Gemini research marks the provider unhealthy."""
+    from ask_another.server import ResearchJob
+
+    monkeypatch.setattr(server, "_provider_registry", {"gemini": "bad-key"})
+    monkeypatch.setattr(server, "_provider_errors", {"gemini": None})
+
+    import litellm
+    import litellm.interactions
+
+    def _fail_auth(**kwargs):
+        raise litellm.AuthenticationError(
+            message="API key invalid",
+            llm_provider="gemini",
+            model="gemini/deep-research-pro-preview-12-2025",
+        )
+
+    monkeypatch.setattr(litellm.interactions, "create", _fail_auth)
+
+    job = ResearchJob(
+        job_id=99,
+        model="gemini/deep-research-pro-preview-12-2025",
+        query="test",
+    )
+    server._run_research_gemini_sync(job, "bad-key")
+
+    assert job.status == "failed"
+    assert server._provider_errors["gemini"] is not None
+    assert "Authentication" in server._provider_errors["gemini"]
+
+
 def test_completion_auth_error_marks_provider_unhealthy(monkeypatch):
     """An auth error during completion marks the provider unhealthy."""
     monkeypatch.setattr(server, "_provider_registry", {"openrouter": "bad-key"})
