@@ -64,3 +64,44 @@ def test_get_models_skips_unhealthy_providers(monkeypatch):
     models = server._get_models()
     assert "openai/gpt-5.2" in models
     assert not any(m.startswith("gemini/") for m in models)
+
+
+def test_build_instructions_excludes_unhealthy_favourites(monkeypatch):
+    """Favourites from unhealthy providers are excluded from instructions."""
+    monkeypatch.setattr(server, "_provider_registry", {
+        "openai": "sk-good",
+        "gemini": "bad-key",
+    })
+    monkeypatch.setattr(server, "_provider_errors", {
+        "openai": None,
+        "gemini": "API key invalid",
+    })
+    monkeypatch.setattr(server, "_annotations", {
+        "openai/gpt-5.2": {
+            "usage": {"call_count": 10, "last_used": "2026-03-12T00:00:00Z"},
+            "annotations": {"note": "Fast"},
+        },
+        "gemini/gemini-3.1-pro": {
+            "usage": {"call_count": 20, "last_used": "2026-03-12T00:00:00Z"},
+            "annotations": {"note": "Long context"},
+        },
+    })
+    instructions = server._build_instructions()
+    assert "openai/gpt-5.2" in instructions
+    assert "gemini/gemini-3.1-pro" not in instructions
+
+
+def test_build_instructions_shows_unavailable_providers(monkeypatch):
+    """Instructions include an Unavailable Providers section with error messages."""
+    monkeypatch.setattr(server, "_provider_registry", {
+        "openai": "sk-good",
+        "gemini": "bad-key",
+    })
+    monkeypatch.setattr(server, "_provider_errors", {
+        "openai": None,
+        "gemini": "Google API key is required",
+    })
+    monkeypatch.setattr(server, "_annotations", {})
+    instructions = server._build_instructions()
+    assert "Unavailable Providers:" in instructions
+    assert "gemini: Google API key is required" in instructions

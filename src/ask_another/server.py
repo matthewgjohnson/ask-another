@@ -105,6 +105,11 @@ def _needs_refresh(annotations: dict[str, dict]) -> bool:
     return False
 
 
+def _unhealthy_providers() -> set[str]:
+    """Return the set of provider names that have errors."""
+    return {p for p, err in _provider_errors.items() if err}
+
+
 def _get_recent_models(annotations: dict[str, dict], days: int = 7) -> list[tuple[str, str]]:
     """Return models first seen within the last N days, newest first."""
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
@@ -719,6 +724,8 @@ def _build_instructions() -> str:
         "    feedback to report the issue — but don't let it block your work.",
     ]
     favourites = _get_favourites(_annotations)
+    unhealthy = _unhealthy_providers()
+    favourites = [f for f in favourites if f.split("/")[0] not in unhealthy]
     if favourites:
         lines.append("Favourite Models:")
         for fav in favourites:
@@ -735,6 +742,7 @@ def _build_instructions() -> str:
         (model_id, entry.get("metadata", {}).get("arena_elo", 0))
         for model_id, entry in _annotations.items()
         if entry.get("metadata", {}).get("arena_elo")
+        and model_id.split("/")[0] not in unhealthy
     ]
     # Sort by Elo desc, then prefer direct providers (fewer path segments)
     rated.sort(key=lambda x: (-x[1], x[0].count("/"), x[0]))
@@ -754,6 +762,7 @@ def _build_instructions() -> str:
 
     # Surface recently added models (first_seen within last 7 days)
     recent = _get_recent_models(_annotations, days=7)
+    recent = [(m, d) for m, d in recent if m.split("/")[0] not in unhealthy]
     if recent:
         # Deduplicate recently added the same way
         seen_recent: set[str] = set()
@@ -768,6 +777,12 @@ def _build_instructions() -> str:
             count += 1
             if count >= 5:
                 break
+
+    errors = {p: err for p, err in _provider_errors.items() if err}
+    if errors:
+        lines.append("Unavailable Providers:")
+        for provider, err in sorted(errors.items()):
+            lines.append(f"  - {provider}: {err}")
 
     return "\n".join(lines)
 
