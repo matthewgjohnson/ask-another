@@ -189,3 +189,41 @@ def test_full_flow_healthy_and_unhealthy(monkeypatch):
     assert "gemini/gemini-3.1-pro" not in instructions
     assert "Unavailable Providers:" in instructions
     assert "gemini: API key invalid" in instructions
+
+
+def test_completion_auth_error_marks_provider_unhealthy(monkeypatch):
+    """An auth error during completion marks the provider unhealthy."""
+    monkeypatch.setattr(server, "_provider_registry", {"openrouter": "bad-key"})
+    monkeypatch.setattr(server, "_provider_errors", {"openrouter": None})
+    monkeypatch.setattr(server, "_model_cache", {
+        "openrouter": (["openrouter/deepseek/deepseek-v3.2"], 9999999999.0),
+    })
+    monkeypatch.setattr(server, "_cache_ttl_minutes", 360)
+    monkeypatch.setattr(server, "_zero_data_retention", True)
+    monkeypatch.setattr(server, "_annotations", {})
+    monkeypatch.setattr(
+        server, "_resolve_model",
+        lambda m: ("openrouter/deepseek/deepseek-v3.2", "bad-key"),
+    )
+    monkeypatch.setattr(
+        server, "_get_models",
+        lambda provider=None, *, zdr=None: ["openrouter/deepseek/deepseek-v3.2"],
+    )
+
+    import litellm
+
+    def _fail_auth(**kwargs):
+        raise litellm.AuthenticationError(
+            message="Missing Authentication header",
+            llm_provider="openrouter",
+            model="openrouter/deepseek/deepseek-v3.2",
+        )
+
+    monkeypatch.setattr(litellm, "completion", _fail_auth)
+
+    import pytest
+    with pytest.raises(litellm.AuthenticationError):
+        server.completion(model="openrouter/deepseek/deepseek-v3.2", prompt="hi")
+
+    assert server._provider_errors["openrouter"] is not None
+    assert "Authentication" in server._provider_errors["openrouter"]

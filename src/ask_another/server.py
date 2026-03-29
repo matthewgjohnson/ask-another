@@ -1059,7 +1059,12 @@ def completion(
         kwargs["temperature"] = temperature
 
     logger.debug("Calling litellm.completion(model=%s)", full_model)
-    response = litellm.completion(**kwargs)
+    try:
+        response = litellm.completion(**kwargs)
+    except litellm.AuthenticationError as exc:
+        _provider_errors[provider] = str(exc)
+        logger.warning("Auth failed for %s, provider marked unhealthy: %s", provider, exc)
+        raise
     logger.debug("Completion response received from %s", full_model)
 
     # Track usage
