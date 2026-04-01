@@ -1,5 +1,8 @@
 """Tests for provider health validation."""
 
+import pytest
+from litellm.exceptions import AuthenticationError
+
 import ask_another.server as server
 
 
@@ -213,7 +216,7 @@ def test_generate_image_auth_error_marks_provider_unhealthy(monkeypatch):
     import litellm
 
     def _fail_auth(**kwargs):
-        raise litellm.AuthenticationError(
+        raise AuthenticationError(
             message="Invalid API key",
             llm_provider="openai",
             model="openai/gpt-image-1",
@@ -221,8 +224,7 @@ def test_generate_image_auth_error_marks_provider_unhealthy(monkeypatch):
 
     monkeypatch.setattr(litellm, "image_generation", _fail_auth)
 
-    import pytest
-    with pytest.raises(litellm.AuthenticationError):
+    with pytest.raises(AuthenticationError):
         server.generate_image(model="openai/gpt-image-1", prompt="a cat")
 
     assert server._provider_errors["openai"] is not None
@@ -251,7 +253,7 @@ def test_generate_image_native_auth_error_marks_provider_unhealthy(monkeypatch):
     import litellm
 
     def _fail_auth(**kwargs):
-        raise litellm.AuthenticationError(
+        raise AuthenticationError(
             message="API key invalid",
             llm_provider="gemini",
             model="gemini/gemini-2.5-flash-image",
@@ -259,8 +261,7 @@ def test_generate_image_native_auth_error_marks_provider_unhealthy(monkeypatch):
 
     monkeypatch.setattr(litellm, "completion", _fail_auth)
 
-    import pytest
-    with pytest.raises(litellm.AuthenticationError):
+    with pytest.raises(AuthenticationError):
         server.generate_image(model="gemini/gemini-2.5-flash-image", prompt="a cat")
 
     assert server._provider_errors["gemini"] is not None
@@ -277,7 +278,7 @@ def test_research_auth_error_marks_provider_unhealthy(monkeypatch):
     import litellm
 
     def _fail_auth(**kwargs):
-        raise litellm.AuthenticationError(
+        raise AuthenticationError(
             message="Missing Authentication header",
             llm_provider="openrouter",
             model="openrouter/perplexity/sonar-deep-research",
@@ -308,7 +309,7 @@ def test_gemini_research_auth_error_marks_provider_unhealthy(monkeypatch):
     import litellm.interactions
 
     def _fail_auth(**kwargs):
-        raise litellm.AuthenticationError(
+        raise AuthenticationError(
             message="API key invalid",
             llm_provider="gemini",
             model="gemini/deep-research-pro-preview-12-2025",
@@ -350,7 +351,7 @@ def test_completion_auth_error_marks_provider_unhealthy(monkeypatch):
     import litellm
 
     def _fail_auth(**kwargs):
-        raise litellm.AuthenticationError(
+        raise AuthenticationError(
             message="Missing Authentication header",
             llm_provider="openrouter",
             model="openrouter/deepseek/deepseek-v3.2",
@@ -358,8 +359,7 @@ def test_completion_auth_error_marks_provider_unhealthy(monkeypatch):
 
     monkeypatch.setattr(litellm, "completion", _fail_auth)
 
-    import pytest
-    with pytest.raises(litellm.AuthenticationError):
+    with pytest.raises(AuthenticationError):
         server.completion(model="openrouter/deepseek/deepseek-v3.2", prompt="hi")
 
     assert server._provider_errors["openrouter"] is not None
