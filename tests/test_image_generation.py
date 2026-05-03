@@ -298,6 +298,49 @@ def test_make_inline_preview_handles_alpha_channel():
     assert out_img.mode == "RGB"
 
 
+def test_open_image_externally_disabled_via_env(tmp_path, monkeypatch):
+    """OPEN_GENERATED_IMAGES=false must prevent any subprocess invocation."""
+    from unittest.mock import patch
+
+    monkeypatch.setenv("OPEN_GENERATED_IMAGES", "false")
+    img = tmp_path / "test.png"
+    img.write_bytes(b"fake")
+    with patch("subprocess.Popen") as mock_popen:
+        result = server._open_image_externally(img)
+    assert result is False
+    mock_popen.assert_not_called()
+
+
+def test_open_image_externally_calls_open_on_darwin(tmp_path, monkeypatch):
+    """On macOS, the helper should invoke `open <path>`."""
+    from unittest.mock import patch
+
+    monkeypatch.delenv("OPEN_GENERATED_IMAGES", raising=False)  # default = enabled
+    img = tmp_path / "test.png"
+    img.write_bytes(b"fake")
+    with patch("platform.system", return_value="Darwin"):
+        with patch("subprocess.Popen") as mock_popen:
+            result = server._open_image_externally(img)
+    assert result is True
+    mock_popen.assert_called_once()
+    args = mock_popen.call_args[0][0]
+    assert args[0] == "open"
+    assert args[1] == str(img)
+
+
+def test_open_image_externally_swallows_errors(tmp_path, monkeypatch):
+    """Open failures are logged but never propagate."""
+    from unittest.mock import patch
+
+    monkeypatch.delenv("OPEN_GENERATED_IMAGES", raising=False)
+    img = tmp_path / "test.png"
+    img.write_bytes(b"fake")
+    with patch("platform.system", return_value="Darwin"):
+        with patch("subprocess.Popen", side_effect=OSError("nope")):
+            result = server._open_image_externally(img)
+    assert result is False
+
+
 def test_generate_image_completion_no_choices(monkeypatch):
     """Empty choices list (e.g. safety filter) raises ValueError, not IndexError."""
     mock_response = SimpleNamespace(choices=[])

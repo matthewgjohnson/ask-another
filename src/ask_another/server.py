@@ -1111,8 +1111,18 @@ def generate_image(
     size: str | None = None,
     quality: str | None = None,
 ) -> list:
-    """Generate an image from a text prompt. The image is returned inline
-    and saved to disk (~/Pictures/ask-another by default).
+    """Generate an image from a text prompt. The image is saved to disk
+    (~/Pictures/ask-another by default), opened in the system default
+    image viewer, and a preview is also returned in the tool result.
+
+    Where to view the generated image:
+    - It pops open in your system image viewer automatically. Disable
+      with OPEN_GENERATED_IMAGES=false if you don't want that.
+    - The full-resolution file is at the path shown in the "Saved to:"
+      message (open it directly for full quality).
+    - In Claude Desktop, the inline preview lives inside the collapsed
+      tool-use details — click to expand the tool call to see it. The
+      chat does not render the preview as a top-level message.
 
     Two model types are supported — the tool picks the right path automatically:
     - Dedicated image models (gpt-image-1, dall-e-3, imagen-4): best control
@@ -1190,13 +1200,16 @@ def generate_image(
             b64_data, mime_type = _extract_image_b64(None, url)
             filepath = _save_image(b64_data, mime_type, prompt)
             logger.debug("Image saved to %s", filepath)
+            opened = _open_image_externally(filepath)
             preview_b64, preview_mime, resized = _make_inline_preview(b64_data, mime_type)
             result_blocks.append(
                 ImageContent(type="image", data=preview_b64, mimeType=preview_mime)
             )
             saved_msg = f"Saved to: {filepath}"
+            if opened:
+                saved_msg += " (opened in your image viewer)"
             if resized:
-                saved_msg += " (preview shown is downsized; open the saved file for full resolution)"
+                saved_msg += " — inline preview is downsized; open the saved file for full resolution"
             result_blocks.append(TextContent(type="text", text=saved_msg))
 
         return result_blocks
@@ -1240,13 +1253,16 @@ def generate_image(
         result_blocks.append(
             TextContent(type="text", text=f"Revised prompt: {revised}")
         )
+    opened = _open_image_externally(filepath)
     preview_b64, preview_mime, resized = _make_inline_preview(b64_data, mime_type)
     result_blocks.append(
         ImageContent(type="image", data=preview_b64, mimeType=preview_mime)
     )
     saved_msg = f"Saved to: {filepath}"
+    if opened:
+        saved_msg += " (opened in your image viewer)"
     if resized:
-        saved_msg += " (preview shown is downsized; open the saved file for full resolution)"
+        saved_msg += " — inline preview is downsized; open the saved file for full resolution"
     result_blocks.append(TextContent(type="text", text=saved_msg))
     return result_blocks
 
@@ -1392,6 +1408,50 @@ def _save_image(b64_data: str, mime_type: str, prompt: str) -> Path:
     filepath.write_bytes(base64.b64decode(b64_data))
 
     return filepath
+
+
+def _open_image_externally(path: Path) -> bool:
+    """Open a saved image in the system's default image viewer.
+
+    Workaround for Claude Desktop hiding MCP-tool image previews inside the
+    collapsed tool-use accordion (so the inline image isn't visible to the
+    user without an extra click). Opening externally guarantees the user
+    sees what was generated.
+
+    Honors OPEN_GENERATED_IMAGES env var (default 'true'); set to '0',
+    'false', or 'no' to disable. Failures are logged but never raise —
+    opening is a UX convenience, not a correctness concern.
+
+    Returns True if an open was attempted, False if disabled or unsupported.
+    """
+    if os.environ.get("OPEN_GENERATED_IMAGES", "true").lower() in ("0", "false", "no"):
+        return False
+
+    import platform
+    import subprocess
+
+    system = platform.system()
+    try:
+        if system == "Darwin":
+            subprocess.Popen(
+                ["open", str(path)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        elif system == "Linux":
+            subprocess.Popen(
+                ["xdg-open", str(path)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        elif system == "Windows":
+            os.startfile(str(path))  # type: ignore[attr-defined]
+        else:
+            return False
+    except Exception as exc:
+        logger.warning("Failed to open image %s: %s", path, exc)
+        return False
+    return True
 
 
 def _run_research_completion_sync(job: ResearchJob, api_key: str) -> None:

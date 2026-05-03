@@ -2,7 +2,7 @@
   "manifest_version": "0.4",
   "name": "ask-another",
   "display_name": "Ask Another",
-  "version": "2.0.3",
+  "version": "2.0.5",
   "description": "Query other AI models — including image and research models — through a unified MCP interface",
   "long_description": "Ask Another lets Claude query other AI models (OpenAI, Gemini, OpenRouter, and more) for second opinions, deep research, image generation, or capabilities beyond Claude's own. Configure providers via API keys; models are discovered automatically. Includes background research jobs, image generation across multiple model families, and personal annotations on models.",
   "author": {
@@ -28,7 +28,8 @@
         "PROVIDER_GEMINI": "${user_config.provider_gemini}",
         "PROVIDER_OPENROUTER": "${user_config.provider_openrouter}",
         "CACHE_TTL_MINUTES": "360",
-        "ZERO_DATA_RETENTION": "${user_config.zero_data_retention}"
+        "ZERO_DATA_RETENTION": "${user_config.zero_data_retention}",
+        "OPEN_GENERATED_IMAGES": "${user_config.open_generated_images}"
       }
     }
   },
@@ -65,6 +66,13 @@
       "type": "boolean",
       "title": "Zero Data Retention (OpenRouter)",
       "description": "Filter OpenRouter results to ZDR-compatible models only",
+      "default": true,
+      "required": false
+    },
+    "open_generated_images": {
+      "type": "boolean",
+      "title": "Open generated images in your image viewer",
+      "description": "Auto-open generated images in your system's default viewer (Preview on macOS). Useful because Claude Desktop hides MCP image previews inside the collapsed tool-use accordion.",
       "default": true,
       "required": false
     }
