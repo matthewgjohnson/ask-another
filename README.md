@@ -1,16 +1,22 @@
 # ask-another
 
-An MCP server that gives your AI assistant access to other LLMs. Query hundreds of models across OpenAI, Google, and OpenRouter through a single interface — with model discovery, usage-based favourites, and automatic enrichment (Elo ratings, pricing, knowledge cutoffs).
+An MCP server that gives your AI assistant access to other LLMs. Query hundreds of models across OpenAI, Google, and OpenRouter through a single interface — with model discovery, usage-based favourites, and automatic enrichment (Elo ratings, pricing, knowledge cutoffs). Includes deep-research jobs and image generation across multiple model families.
 
-## Quick Start
+## Quick Start (Claude Desktop)
 
-1. Install [uv](https://docs.astral.sh/uv/) (see [Installation Guide](docs/install.md) for Linux/Windows):
+1. **Download** the latest `ask-another.mcpb` from [Releases](https://github.com/matthewgjohnson/ask-another/releases).
+2. **Double-click** the `.mcpb` file. Claude Desktop opens an install dialog.
+3. **Paste your API keys** into the prompts (any one is enough — leave others blank to skip):
+   - OpenAI key (starts with `sk-`)
+   - Google AI Studio key (Gemini)
+   - OpenRouter key (starts with `sk-or-`)
+4. **Click Enable.** First launch downloads dependencies (~30s with progress UI); after that, sub-second.
 
-```bash
-brew install uv
-```
+Done. The 10 tools (see below) are now available to Claude Desktop.
 
-2. Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json`):
+## Other MCP clients (Claude Code, Cursor, Windsurf, …)
+
+These clients don't install `.mcpb` files. Add the server to your client's MCP config manually. Example for Claude Code (`~/.claude.json`):
 
 ```json
 {
@@ -19,18 +25,16 @@ brew install uv
       "command": "uvx",
       "args": ["--from", "git+https://github.com/matthewgjohnson/ask-another", "ask-another"],
       "env": {
-        "PROVIDER_OPENAI": "openai;sk-your-openai-key",
-        "PROVIDER_GEMINI": "gemini;your-google-key",
-        "PROVIDER_OPENROUTER": "openrouter;sk-or-your-openrouter-key"
+        "PROVIDER_OPENAI": "sk-your-openai-key",
+        "PROVIDER_GEMINI": "your-google-key",
+        "PROVIDER_OPENROUTER": "sk-or-your-openrouter-key"
       }
     }
   }
 }
 ```
 
-At least one provider is required. Remove any you don't have keys for.
-
-3. Restart Claude Desktop.
+Requires [uv](https://docs.astral.sh/uv/) on PATH (`brew install uv` on macOS). Provider entries are optional individually — at least one is needed.
 
 ## What You Can Do
 
@@ -46,6 +50,16 @@ See all 10 tools in the [Reference](docs/reference.md).
 
 - **[Installation Guide](docs/install.md)** — Linux/Windows setup, Claude Code, Cursor, Windsurf, and other MCP clients, all configuration options
 - **[Reference](docs/reference.md)** — tools, annotations & enrichment, architecture, development
+
+## Building from source
+
+```bash
+git clone https://github.com/matthewgjohnson/ask-another
+cd ask-another
+make dxt          # builds ask-another.mcpb
+```
+
+Then double-click the `.mcpb` to install in Claude Desktop.
 
 ## License
 
