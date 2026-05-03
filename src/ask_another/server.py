@@ -1173,7 +1173,16 @@ def generate_image(
             _provider_auth_errors.add(provider)
             logger.warning("Auth failed for %s, provider marked unhealthy: %s", provider, exc)
             raise
-        logger.debug("Image completion response received from %s", full_model)
+        except Exception as exc:
+            logger.warning(
+                "litellm.completion (image modalities) raised for %s: %s: %s",
+                full_model, type(exc).__name__, exc,
+            )
+            raise
+        logger.debug(
+            "Image completion response received from %s; choices=%d",
+            full_model, len(response.choices) if response.choices else 0,
+        )
 
         if not response.choices:
             raise ValueError(
@@ -1199,7 +1208,7 @@ def generate_image(
             url = img_item["image_url"]["url"]
             b64_data, mime_type = _extract_image_b64(None, url)
             filepath = _save_image(b64_data, mime_type, prompt)
-            logger.debug("Image saved to %s", filepath)
+            logger.debug("Image saved to %s (raw_b64=%d, mime=%s)", filepath, len(b64_data), mime_type)
             opened = _open_image_externally(filepath)
             preview_b64, preview_mime, resized = _make_inline_preview(b64_data, mime_type)
             result_blocks.append(
@@ -1211,6 +1220,15 @@ def generate_image(
             if resized:
                 saved_msg += " — inline preview is downsized; open the saved file for full resolution"
             result_blocks.append(TextContent(type="text", text=saved_msg))
+
+        try:
+            total_size = sum(len(b.model_dump_json()) for b in result_blocks)
+            logger.debug(
+                "generate_image NATIVE returning %d blocks, total JSON size=%d",
+                len(result_blocks), total_size,
+            )
+        except Exception:
+            pass
 
         return result_blocks
 
@@ -1235,9 +1253,19 @@ def generate_image(
         _provider_auth_errors.add(provider)
         logger.warning("Auth failed for %s, provider marked unhealthy: %s", provider, exc)
         raise
-    logger.debug("Image generation response received from %s", full_model)
+    except Exception as exc:
+        logger.warning(
+            "litellm.image_generation raised for %s: %s: %s",
+            full_model, type(exc).__name__, exc,
+        )
+        raise
+    logger.debug(
+        "Image generation response received from %s; data_count=%d",
+        full_model, len(response.data) if response.data else 0,
+    )
 
     if not response.data:
+        logger.warning("Model %s returned no image data.", full_model)
         raise ValueError(f"Model {full_model} returned no image data.")
     img_obj = response.data[0]
     b64_data, mime_type = _extract_image_b64(
@@ -1264,6 +1292,14 @@ def generate_image(
     if resized:
         saved_msg += " — inline preview is downsized; open the saved file for full resolution"
     result_blocks.append(TextContent(type="text", text=saved_msg))
+    try:
+        total_size = sum(len(b.model_dump_json()) for b in result_blocks)
+        logger.debug(
+            "generate_image DEDICATED returning %d blocks, total JSON size=%d",
+            len(result_blocks), total_size,
+        )
+    except Exception:
+        pass
     return result_blocks
 
 
@@ -1342,7 +1378,13 @@ def _make_inline_preview(b64_data: str, mime_type: str) -> tuple[str, str, bool]
     The full-resolution image is still saved to disk separately, so the
     preview is purely for in-chat display.
     """
-    if len(b64_data) <= _INLINE_IMAGE_MAX_B64_BYTES:
+    in_size = len(b64_data)
+    logger.debug(
+        "inline-preview INPUT: b64_size=%d, mime=%s, budget=%d",
+        in_size, mime_type, _INLINE_IMAGE_MAX_B64_BYTES,
+    )
+    if in_size <= _INLINE_IMAGE_MAX_B64_BYTES:
+        logger.debug("inline-preview PASSTHROUGH: under budget, returning unchanged")
         return b64_data, mime_type, False
 
     from io import BytesIO
@@ -1351,6 +1393,10 @@ def _make_inline_preview(b64_data: str, mime_type: str) -> tuple[str, str, bool]
 
     raw = base64.b64decode(b64_data)
     img = Image.open(BytesIO(raw))
+    logger.debug(
+        "inline-preview DECODED: format=%s, mode=%s, size=%s, raw=%d",
+        img.format, img.mode, img.size, len(raw),
+    )
     if img.mode in ("RGBA", "LA", "P"):
         background = Image.new("RGB", img.size, (255, 255, 255))
         if img.mode == "P":
@@ -1369,15 +1415,27 @@ def _make_inline_preview(b64_data: str, mime_type: str) -> tuple[str, str, bool]
         (384, 70),
     ]
     encoded = b""
+    chosen_dim = chosen_q = 0
     for max_dim, quality in fallbacks:
         candidate = img.copy()
         candidate.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
         buf = BytesIO()
         candidate.save(buf, format="JPEG", quality=quality, optimize=True)
         encoded = buf.getvalue()
-        if len(encoded) * 4 // 3 <= _INLINE_IMAGE_MAX_B64_BYTES:  # b64 ~33% larger
+        chosen_dim, chosen_q = max_dim, quality
+        b64_estimate = len(encoded) * 4 // 3
+        logger.debug(
+            "inline-preview ATTEMPT: dim<=%d quality=%d -> raw=%d b64~%d",
+            max_dim, quality, len(encoded), b64_estimate,
+        )
+        if b64_estimate <= _INLINE_IMAGE_MAX_B64_BYTES:
             break
-    return base64.b64encode(encoded).decode(), "image/jpeg", True
+    out_b64 = base64.b64encode(encoded).decode()
+    logger.debug(
+        "inline-preview OUTPUT: dim<=%d quality=%d, b64_size=%d (was %d)",
+        chosen_dim, chosen_q, len(out_b64), in_size,
+    )
+    return out_b64, "image/jpeg", True
 
 
 def _save_image(b64_data: str, mime_type: str, prompt: str) -> Path:
