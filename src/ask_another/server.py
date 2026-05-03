@@ -1149,6 +1149,12 @@ def generate_image(
             raise
         logger.debug("Image completion response received from %s", full_model)
 
+        if not response.choices:
+            raise ValueError(
+                f"Model {full_model} returned no response choices "
+                "(likely filtered by safety policy). Try rephrasing the prompt."
+            )
+
         result_blocks: list = []
 
         choice = cast(Choices, response.choices[0])
