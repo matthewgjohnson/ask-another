@@ -205,11 +205,16 @@ class JobStore:
 
 @asynccontextmanager
 async def _lifespan(server: FastMCP) -> AsyncIterator[dict[str, Any]]:
-    """Lifespan context: populate caches and enrich on startup."""
+    """Lifespan context: populate caches and enrich on startup.
+
+    Enrichment runs as a background task so the lifespan yields immediately,
+    making the server responsive to MCP `initialize` even on cold starts.
+    Without this, slow GitHub/HuggingFace fetches can blow CDA's stdio
+    handshake timeout and trigger "Could not attach to MCP server".
+    """
     async with anyio.create_task_group() as tg:
-        # Startup enrichment (run in thread to not block)
         if _needs_refresh(_annotations):
-            await anyio.to_thread.run_sync(_startup_enrich)
+            tg.start_soon(anyio.to_thread.run_sync, _startup_enrich)
         yield {"job_store": JobStore(tg)}
 
 
