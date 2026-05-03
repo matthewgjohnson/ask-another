@@ -15,6 +15,12 @@ ask-another = "ask_another.server:main"
 [dependency-groups]
 dev = ["pytest"]
 
+[tool.pytest.ini_options]
+addopts = "-m 'not integration'"
+markers = [
+    "integration: hits live provider APIs (costs money, requires PROVIDER_* keys)",
+]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
