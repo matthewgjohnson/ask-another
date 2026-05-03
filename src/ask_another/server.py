@@ -1190,12 +1190,14 @@ def generate_image(
             b64_data, mime_type = _extract_image_b64(None, url)
             filepath = _save_image(b64_data, mime_type, prompt)
             logger.debug("Image saved to %s", filepath)
+            preview_b64, preview_mime, resized = _make_inline_preview(b64_data, mime_type)
             result_blocks.append(
-                ImageContent(type="image", data=b64_data, mimeType=mime_type)
+                ImageContent(type="image", data=preview_b64, mimeType=preview_mime)
             )
-            result_blocks.append(
-                TextContent(type="text", text=f"Saved to: {filepath}")
-            )
+            saved_msg = f"Saved to: {filepath}"
+            if resized:
+                saved_msg += " (preview shown is downsized; open the saved file for full resolution)"
+            result_blocks.append(TextContent(type="text", text=saved_msg))
 
         return result_blocks
 
@@ -1238,12 +1240,14 @@ def generate_image(
         result_blocks.append(
             TextContent(type="text", text=f"Revised prompt: {revised}")
         )
+    preview_b64, preview_mime, resized = _make_inline_preview(b64_data, mime_type)
     result_blocks.append(
-        ImageContent(type="image", data=b64_data, mimeType=mime_type)
+        ImageContent(type="image", data=preview_b64, mimeType=preview_mime)
     )
-    result_blocks.append(
-        TextContent(type="text", text=f"Saved to: {filepath}")
-    )
+    saved_msg = f"Saved to: {filepath}"
+    if resized:
+        saved_msg += " (preview shown is downsized; open the saved file for full resolution)"
+    result_blocks.append(TextContent(type="text", text=saved_msg))
     return result_blocks
 
 
@@ -1304,6 +1308,60 @@ def _extract_image_b64(
         return base64.b64encode(raw).decode(), content_type
 
     raise ValueError("No image data in response")
+
+
+# Claude Desktop caps tool results at 1 MB. We stay well under that to leave
+# room for surrounding JSON and any text blocks shipped alongside the image.
+_INLINE_IMAGE_MAX_B64_BYTES = 750_000
+_INLINE_PREVIEW_MAX_DIM = 1024
+_INLINE_PREVIEW_JPEG_QUALITY = 85
+
+
+def _make_inline_preview(b64_data: str, mime_type: str) -> tuple[str, str, bool]:
+    """Return (preview_b64, preview_mime, was_resized).
+
+    If the original fits under the inline budget, returns it unchanged. If
+    not, decodes the image and re-encodes as JPEG, falling through a list of
+    (max_dim, quality) pairs until the result fits. Uses LANCZOS resampling.
+    The full-resolution image is still saved to disk separately, so the
+    preview is purely for in-chat display.
+    """
+    if len(b64_data) <= _INLINE_IMAGE_MAX_B64_BYTES:
+        return b64_data, mime_type, False
+
+    from io import BytesIO
+
+    from PIL import Image
+
+    raw = base64.b64decode(b64_data)
+    img = Image.open(BytesIO(raw))
+    if img.mode in ("RGBA", "LA", "P"):
+        background = Image.new("RGB", img.size, (255, 255, 255))
+        if img.mode == "P":
+            img = img.convert("RGBA")
+        background.paste(img, mask=img.split()[-1] if img.mode == "RGBA" else None)
+        img = background
+    elif img.mode != "RGB":
+        img = img.convert("RGB")
+
+    # Progressive fallback: photos fit at the first step; pathological cases
+    # (high-entropy images that JPEG can't compress) drop further.
+    fallbacks = [
+        (_INLINE_PREVIEW_MAX_DIM, _INLINE_PREVIEW_JPEG_QUALITY),
+        (768, 80),
+        (512, 75),
+        (384, 70),
+    ]
+    encoded = b""
+    for max_dim, quality in fallbacks:
+        candidate = img.copy()
+        candidate.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
+        buf = BytesIO()
+        candidate.save(buf, format="JPEG", quality=quality, optimize=True)
+        encoded = buf.getvalue()
+        if len(encoded) * 4 // 3 <= _INLINE_IMAGE_MAX_B64_BYTES:  # b64 ~33% larger
+            break
+    return base64.b64encode(encoded).decode(), "image/jpeg", True
 
 
 def _save_image(b64_data: str, mime_type: str, prompt: str) -> Path:

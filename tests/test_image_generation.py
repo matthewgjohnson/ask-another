@@ -242,6 +242,62 @@ def test_generate_image_completion_no_images(monkeypatch):
                 assert "returned no images" in str(e)
 
 
+def test_make_inline_preview_passes_through_small_image():
+    """Small images skip resize and return unchanged."""
+    raw = b"\x89PNG\r\n\x1a\n" + b"\x00" * 1000  # not a real PNG, but small
+    b64 = base64.b64encode(raw).decode()
+    out_b64, out_mime, resized = server._make_inline_preview(b64, "image/png")
+    assert out_b64 == b64
+    assert out_mime == "image/png"
+    assert resized is False
+
+
+def _noisy_image(size: tuple[int, int], mode: str = "RGB") -> bytes:
+    """Generate a PNG of incompressible noise so we exceed the size budget."""
+    from io import BytesIO
+    import os as _os
+    from PIL import Image
+
+    pixel_count = size[0] * size[1] * (4 if mode == "RGBA" else 3)
+    img = Image.frombytes(mode, size, _os.urandom(pixel_count))
+    buf = BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def test_make_inline_preview_resizes_large_image():
+    """An image whose b64 exceeds the budget is downsized and re-encoded as JPEG."""
+    from io import BytesIO
+    from PIL import Image
+
+    raw = _noisy_image((1024, 1024))
+    big_b64 = base64.b64encode(raw).decode()
+    assert len(big_b64) > server._INLINE_IMAGE_MAX_B64_BYTES, "test image not big enough"
+
+    out_b64, out_mime, resized = server._make_inline_preview(big_b64, "image/png")
+    assert resized is True
+    assert out_mime == "image/jpeg"
+    assert len(out_b64) < server._INLINE_IMAGE_MAX_B64_BYTES
+    out_img = Image.open(BytesIO(base64.b64decode(out_b64)))
+    assert max(out_img.size) <= server._INLINE_PREVIEW_MAX_DIM
+
+
+def test_make_inline_preview_handles_alpha_channel():
+    """RGBA images flatten onto white before JPEG encoding (no crash)."""
+    from io import BytesIO
+    from PIL import Image
+
+    raw = _noisy_image((1024, 1024), mode="RGBA")
+    big_b64 = base64.b64encode(raw).decode()
+    assert len(big_b64) > server._INLINE_IMAGE_MAX_B64_BYTES, "test image not big enough"
+
+    out_b64, out_mime, resized = server._make_inline_preview(big_b64, "image/png")
+    assert resized is True
+    assert out_mime == "image/jpeg"
+    out_img = Image.open(BytesIO(base64.b64decode(out_b64)))
+    assert out_img.mode == "RGB"
+
+
 def test_generate_image_completion_no_choices(monkeypatch):
     """Empty choices list (e.g. safety filter) raises ValueError, not IndexError."""
     mock_response = SimpleNamespace(choices=[])
