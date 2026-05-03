@@ -148,6 +148,82 @@ async def test_server_handles_tool_call(tmp_path: Path) -> None:
     assert entry["issue"] == "smoke test"
 
 
+# ---------------------------------------------------------------------------
+# Phase-1 smoke: spawn through uvx the way CDA does
+#
+# The tests above use sys.executable + python -m, which only exercises the
+# server-side boot. CDA's actual command is:
+#
+#     uvx --from <SOURCE> ask-another
+#
+# where <SOURCE> is a git URL or local path. uvx must build a wheel from the
+# source, install it into a venv, and only then exec the entry point. This
+# tier validates that *that whole path* completes within CDA's attach budget,
+# which is the bug we shipped past today.
+#
+# Source defaults to the local repo so the test is hermetic and reflects the
+# working tree. Set ASK_ANOTHER_TEST_SOURCE to a git URL (e.g.
+# "git+https://github.com/matthewgjohnson/ask-another@develop") to validate
+# the exact CDA spawn against what's pushed.
+# ---------------------------------------------------------------------------
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+UVX_BUDGET_SECONDS = 30.0  # cold wheel build + Python import + lifespan yield
+
+
+def _uvx_server_params(
+    source: str,
+    annotations_file: Path,
+    extra_env: dict[str, str] | None = None,
+) -> StdioServerParameters:
+    """Spawn the server through uvx, matching CDA's spawn semantics.
+
+    Differs from CDA in three controlled ways:
+    - source: local path or git URL — the test caller chooses
+    - ANNOTATIONS_FILE: redirected to a tmp file so we control staleness
+    - LOG_*: omitted to keep the test quiet (CDA sets these but the server
+      only adds a handler if LOG_LEVEL is non-empty)
+    """
+    env = {
+        "PATH": os.environ["PATH"],
+        "HOME": os.environ.get("HOME", ""),
+        "ANNOTATIONS_FILE": str(annotations_file),
+    }
+    for k, v in os.environ.items():
+        if k.startswith("PROVIDER_"):
+            env[k] = v
+    if extra_env:
+        env.update(extra_env)
+
+    return StdioServerParameters(
+        command="uvx",
+        args=["--from", source, "ask-another"],
+        env=env,
+    )
+
+
+@pytest.mark.anyio
+async def test_uvx_spawn_boots_within_cda_budget(tmp_path: Path) -> None:
+    """The full Phase-1 path (uvx fetch+build+install+exec → MCP initialize)
+    must complete within CDA's effective attach budget.
+
+    Uses the local repo as the source — same uvx machinery as CDA but no
+    git clone. The wheel build, venv install, and entry-point resolution
+    are all exercised. This is the test that would have caught today's
+    'Could not attach' regardless of whether CDA was running stale cached
+    code from `develop`.
+    """
+    source = os.environ.get("ASK_ANOTHER_TEST_SOURCE", str(REPO_ROOT))
+    params = _uvx_server_params(source, _fresh_annotations_file(tmp_path))
+
+    async with stdio_client(params) as (read, write):
+        async with ClientSession(read, write) as session:
+            with anyio.fail_after(UVX_BUDGET_SECONDS):
+                await session.initialize()
+            tools = await session.list_tools()
+    assert tools.tools, "Server attached but reported no tools"
+
+
 @pytest.fixture
 def anyio_backend() -> str:
     return "asyncio"
