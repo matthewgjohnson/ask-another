@@ -43,3 +43,6 @@ PLAN.md
 docs/
 scripts/
 Markdown*.md
+
+# Build tooling — not needed at runtime in the installed extension
+Makefile
