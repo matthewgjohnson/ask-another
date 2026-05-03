@@ -10,7 +10,7 @@ An MCP (Model Context Protocol) server that lets Claude Desktop query other LLMs
 
 ```bash
 uv sync                                                                    # Install dependencies
-PROVIDER_OPENAI="openai;sk-test" uv run ask-another                        # Run the server locally
+PROVIDER_OPENAI="sk-test" uv run ask-another                               # Run the server locally
 ```
 
 Tests can be run with:
@@ -34,7 +34,7 @@ The entire server lives in a single file: `src/ask_another/server.py`. It expose
 - **`cancel_research`** — cancels a running research task by its job_id
 - **`generate_image`** — generates an image from a text prompt. Automatically routes between two LiteLLM paths: `litellm.image_generation()` for dedicated image models (gpt-image-1, dall-e-3, imagen-4) and `litellm.completion()` with `modalities=["image","text"]` for native image-output models (Gemini Nano Banana family). Returns images inline via MCP `ImageContent` and saves to disk.
 
-Providers are configured via `PROVIDER_*` environment variables with the format `provider-name;api-key`. These are parsed at module import time into a `_provider_registry` dict mapping provider names to API keys.
+Providers are configured via `PROVIDER_*` environment variables. Two formats are accepted: bare key (`PROVIDER_OPENAI=sk-...`, provider derived from var suffix) or legacy prefixed (`PROVIDER_OPENAI=openai;sk-...`, prefix wins). These are parsed at module import time into a `_provider_registry` dict mapping provider names to API keys.
 
 Model discovery uses `litellm.get_valid_models(check_provider_endpoint=True)` by default, with exception handlers for providers where LiteLLM listing is unsupported (OpenRouter). A generic normalisation rule ensures all model IDs use `provider/model-name` format. Results are cached in memory with a configurable TTL.
 

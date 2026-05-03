@@ -226,23 +226,34 @@ async def _lifespan(server: FastMCP) -> AsyncIterator[dict[str, Any]]:
 def _parse_provider_config(var_name: str, value: str) -> tuple[str, str]:
     """Parse a PROVIDER_* environment variable.
 
-    Expected format: provider-name;api-key
+    Two formats are accepted:
+
+    - Bare key: ``PROVIDER_OPENAI=sk-...`` — provider derived from the env
+      var suffix (everything after ``PROVIDER_``, lowercased). This is the
+      preferred format and what DXT install prompts produce.
+    - Legacy prefixed: ``PROVIDER_OPENAI=openai;sk-...`` — kept for
+      backwards compatibility with existing configs. The prefix wins.
     """
-    if ";" not in value:
-        raise ValueError(
-            f"Invalid format for {var_name}: expected 'provider-name;api-key'"
-        )
+    value = value.strip()
+    if not value:
+        raise ValueError(f"Invalid format for {var_name}: value is empty")
 
-    parts = value.split(";", 1)
-    provider = parts[0].strip()
-    api_key = parts[1].strip()
+    if ";" in value:
+        parts = value.split(";", 1)
+        provider = parts[0].strip()
+        api_key = parts[1].strip()
+        if not provider:
+            raise ValueError(
+                f"Invalid format for {var_name}: provider name is empty before ';'"
+            )
+        if not api_key:
+            raise ValueError(f"Invalid format for {var_name}: API key is empty")
+        return provider, api_key
 
-    if not provider:
-        raise ValueError(f"Invalid format for {var_name}: provider name is empty")
-    if not api_key:
-        raise ValueError(f"Invalid format for {var_name}: API key is empty")
-
-    return provider, api_key
+    suffix = var_name[len("PROVIDER_"):]
+    if not suffix:
+        raise ValueError(f"Cannot derive provider name from {var_name}")
+    return suffix.lower(), value
 
 
 def _get_family(model_id: str) -> str:

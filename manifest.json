@@ -43,21 +43,21 @@
     "provider_openai": {
       "type": "string",
       "title": "OpenAI API Key (optional)",
-      "description": "Format: openai;sk-... — prefix your OpenAI key with 'openai;'. Leave blank to skip OpenAI.",
+      "description": "Your OpenAI API key (starts with 'sk-'). Leave blank to skip OpenAI.",
       "sensitive": true,
       "required": false
     },
     "provider_gemini": {
       "type": "string",
       "title": "Gemini API Key (optional)",
-      "description": "Format: gemini;... — prefix your Google AI Studio key with 'gemini;'. Leave blank to skip Gemini.",
+      "description": "Your Google AI Studio API key. Leave blank to skip Gemini.",
       "sensitive": true,
       "required": false
     },
     "provider_openrouter": {
       "type": "string",
       "title": "OpenRouter API Key (optional)",
-      "description": "Format: openrouter;sk-or-... — prefix your OpenRouter key with 'openrouter;'. Leave blank to skip OpenRouter.",
+      "description": "Your OpenRouter API key (starts with 'sk-or-'). Leave blank to skip OpenRouter.",
       "sensitive": true,
       "required": false
     },
