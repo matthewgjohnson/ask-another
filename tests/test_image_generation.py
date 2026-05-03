@@ -240,3 +240,21 @@ def test_generate_image_completion_no_images(monkeypatch):
                 assert False, "Should have raised ValueError"
             except ValueError as e:
                 assert "returned no images" in str(e)
+
+
+def test_generate_image_completion_no_choices(monkeypatch):
+    """Empty choices list (e.g. safety filter) raises ValueError, not IndexError."""
+    mock_response = SimpleNamespace(choices=[])
+
+    with patch.object(server, "_resolve_model", return_value=("gemini/gemini-2.5-flash-image", "gk-test")):
+        with patch("litellm.completion", return_value=mock_response):
+            try:
+                server.generate_image(
+                    model="gemini/gemini-2.5-flash-image",
+                    prompt="test",
+                )
+                assert False, "Should have raised ValueError"
+            except ValueError as e:
+                assert "no response choices" in str(e)
+            except IndexError:
+                assert False, "Bug regression: IndexError instead of ValueError"
