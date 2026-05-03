@@ -18,13 +18,14 @@ import ask_another.server as server
 
 @pytest.fixture(scope="session", autouse=True)
 def _live_config() -> None:
-    """Load env-based config once per session so module globals are populated."""
-    if not any(k.startswith("PROVIDER_") for k in os.environ):
-        pytest.skip(
-            "No PROVIDER_* env vars set — set at least one to run live tests.",
-            allow_module_level=True,
-        )
-    server._load_config()
+    """Load env-based config once per session so module globals are populated.
+
+    Doesn't skip when no providers are set — the MCP smoke tests run without
+    keys. Tests that need a specific provider should use the per-provider
+    fixtures below, which skip individually when their key is missing.
+    """
+    if any(k.startswith("PROVIDER_") for k in os.environ):
+        server._load_config()
 
 
 def _require_provider(name: str) -> str:
