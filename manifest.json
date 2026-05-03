@@ -1,9 +1,9 @@
 {
   "manifest_version": "0.4",
   "name": "ask-another",
-  "display_name": "Ask Another LLM",
-  "version": "2.0.2",
-  "description": "Query other LLMs through a unified MCP interface",
+  "display_name": "Ask Another",
+  "version": "2.0.3",
+  "description": "Query other AI models through a unified MCP interface",
   "long_description": "Ask Another lets Claude query other LLMs (OpenAI, Gemini, OpenRouter, and more) for second opinions, deep research, image generation, or capabilities beyond Claude's own. Configure providers via API keys; models are discovered automatically. Includes background research jobs, image generation across multiple model families, and personal annotations on models.",
   "author": {
     "name": "Matthew G Johnson",

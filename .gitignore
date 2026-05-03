@@ -25,3 +25,7 @@ uv.lock
 
 # Local docs
 Markdown Documentation Standards v3-03.md
+
+# MCPB / DXT bundles (built artifacts)
+*.mcpb
+*.dxt
