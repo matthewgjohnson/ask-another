@@ -1,0 +1,14 @@
+{
+  "ask-another": {
+    "command": "uvx",
+    "args": ["--from", "git+https://github.com/matthewgjohnson/ask-another", "ask-another"],
+    "env": {
+      "PROVIDER_OPENAI": "${PROVIDER_OPENAI}",
+      "PROVIDER_GEMINI": "${PROVIDER_GEMINI}",
+      "PROVIDER_OPENROUTER": "${PROVIDER_OPENROUTER}",
+      "ZERO_DATA_RETENTION": "${ASK_ANOTHER_ZDR:-true}",
+      "OPEN_GENERATED_IMAGES": "${ASK_ANOTHER_OPEN_IMAGES:-true}",
+      "CACHE_TTL_MINUTES": "360"
+    }
+  }
+}

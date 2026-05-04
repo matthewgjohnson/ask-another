@@ -14,9 +14,26 @@ An MCP server that gives your AI assistant access to other LLMs. Query hundreds 
 
 Done. The 10 tools (see below) are now available to Claude Desktop.
 
-## Other MCP clients (Claude Code, Cursor, Windsurf, …)
+## Quick Start (Claude Code)
 
-These clients don't install `.mcpb` files. Add the server to your client's MCP config manually. Example for Claude Code (`~/.claude.json`):
+This repo doubles as a Claude Code plugin marketplace. Install in two steps:
+
+```bash
+export PROVIDER_OPENAI=sk-your-openai-key
+export PROVIDER_GEMINI=your-google-key
+export PROVIDER_OPENROUTER=sk-or-your-openrouter-key
+```
+…then in Claude Code:
+```
+/plugin marketplace add matthewgjohnson/ask-another
+/plugin install ask-another@ask-another
+```
+
+(Drop any provider env var you don't have a key for; at least one is required.) Requires [uv](https://docs.astral.sh/uv/) on PATH (`brew install uv` on macOS). Plugin auto-updates when the marketplace's repo gets new commits.
+
+## Other MCP clients (Cursor, Windsurf, …)
+
+For clients without DXT or plugin support, add the server manually. Example config:
 
 ```json
 {
@@ -33,8 +50,6 @@ These clients don't install `.mcpb` files. Add the server to your client's MCP c
   }
 }
 ```
-
-Requires [uv](https://docs.astral.sh/uv/) on PATH (`brew install uv` on macOS). Provider entries are optional individually — at least one is needed.
 
 ## What You Can Do
 

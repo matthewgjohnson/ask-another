@@ -46,3 +46,7 @@ Markdown*.md
 
 # Build tooling — not needed at runtime in the installed extension
 Makefile
+
+# Claude Code plugin metadata — used by CC, irrelevant inside the .mcpb
+.claude-plugin/
+.mcp.json

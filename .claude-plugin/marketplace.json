@@ -1,0 +1,19 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "ask-another",
+  "description": "Single-plugin marketplace for ask-another — query other AI models from Claude Code.",
+  "owner": {
+    "name": "Matthew G Johnson",
+    "url": "https://github.com/matthewgjohnson"
+  },
+  "plugins": [
+    {
+      "name": "ask-another",
+      "description": "Query other AI models — including image and research models — through a unified MCP interface.",
+      "category": "ai",
+      "source": ".",
+      "homepage": "https://github.com/matthewgjohnson/ask-another",
+      "tags": ["llm", "multi-model", "research", "image-generation"]
+    }
+  ]
+}
