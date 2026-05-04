@@ -230,7 +230,7 @@ def _parse_provider_config(var_name: str, value: str) -> tuple[str, str]:
 
     - Bare key: ``PROVIDER_OPENAI=sk-...`` — provider derived from the env
       var suffix (everything after ``PROVIDER_``, lowercased). This is the
-      preferred format and what DXT install prompts produce.
+      preferred format and what MCPB install prompts produce.
     - Legacy prefixed: ``PROVIDER_OPENAI=openai;sk-...`` — kept for
       backwards compatibility with existing configs. The prefix wins.
     """

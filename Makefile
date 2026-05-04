@@ -1,12 +1,12 @@
 SHELL := /bin/bash
-.PHONY: help test smoke integration dxt release clean
+.PHONY: help test smoke integration mcpb release clean
 
 help:
 	@echo "Targets:"
 	@echo "  make test         Run unit tests (fast, no network)"
 	@echo "  make smoke        Run MCP boot smoke tests (no provider keys needed)"
 	@echo "  make integration  Run live integration tests (requires PROVIDER_* env vars)"
-	@echo "  make dxt          Validate manifest and build ask-another.mcpb"
+	@echo "  make mcpb         Validate manifest and build ask-another.mcpb"
 	@echo "  make release VERSION=X.Y.Z"
 	@echo "                    Verify clean tree + manifest version match,"
 	@echo "                    build .mcpb, tag vX.Y.Z, push, create GitHub release"
@@ -21,13 +21,13 @@ smoke:
 integration:
 	uv run pytest tests/integration -m integration -v
 
-dxt:
+mcpb:
 	@npx -y @anthropic-ai/mcpb validate manifest.json
 	@npx -y @anthropic-ai/mcpb pack . ask-another.mcpb
 	@printf "\nBuilt: %s (%s bytes)\n" ask-another.mcpb "$$(stat -f%z ask-another.mcpb 2>/dev/null || stat -c%s ask-another.mcpb)"
 	@printf "sha256: %s\n" "$$(shasum -a 256 ask-another.mcpb | cut -d' ' -f1)"
 
-release: dxt
+release: mcpb
 	@if [ -z "$(VERSION)" ]; then echo "ERROR: VERSION required (e.g. make release VERSION=2.0.9)"; exit 1; fi
 	@if [ -n "$$(git status --porcelain)" ]; then echo "ERROR: working tree is dirty — commit or stash first"; exit 1; fi
 	@manifest_version=$$(python3 -c 'import json; print(json.load(open("manifest.json"))["version"])'); \

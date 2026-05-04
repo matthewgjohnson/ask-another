@@ -2,6 +2,10 @@
 
 An MCP server that gives your AI assistant access to other LLMs. Query hundreds of models across OpenAI, Google, and OpenRouter through a single interface — with model discovery, usage-based favourites, and automatic enrichment (Elo ratings, pricing, knowledge cutoffs). Includes deep-research jobs and image generation across multiple model families.
 
+## Prerequisite
+
+[uv](https://docs.astral.sh/uv/). Install via `brew install uv` (macOS / Linux with Homebrew) or `winget install astral-sh.uv` (Windows). See [docs/install.md](docs/install.md) for distro-specific options.
+
 ## Quick Start (Claude Desktop)
 
 1. **Download** the latest `ask-another.mcpb` from [Releases](https://github.com/matthewgjohnson/ask-another/releases).
@@ -23,13 +27,13 @@ This repo doubles as a Claude Code plugin marketplace. Install in two steps:
 /plugin install ask-another@ask-another
 ```
 
-Claude Code will prompt for your API keys and other settings during install — no shell env vars or JSON editing required. Sensitive values are stored in your system keychain. At least one provider key is needed; leave the others blank.
+Then enter your keys: open `/plugin` → **ask-another** → **Configure options**, paste any one provider key (others can stay blank), and Save. Run `/reload-plugins` to apply.
 
-Requires [uv](https://docs.astral.sh/uv/) on PATH (`brew install uv` on macOS). Plugin auto-updates when the marketplace's repo gets new commits.
+To get future updates without uninstall/reinstall, enable auto-update from `/plugin` → **Marketplaces** → `matthewgjohnson/ask-another`. Off by default for third-party marketplaces.
 
 ## Other MCP clients (Cursor, Windsurf, …)
 
-For clients without DXT or plugin support, add the server manually. Example config:
+For clients without MCPB or plugin support, add the server manually. Example config:
 
 ```json
 {
@@ -67,7 +71,7 @@ See all 10 tools in the [Reference](docs/reference.md).
 ```bash
 git clone https://github.com/matthewgjohnson/ask-another
 cd ask-another
-make dxt          # builds ask-another.mcpb
+make mcpb         # builds ask-another.mcpb
 ```
 
 Then double-click the `.mcpb` to install in Claude Desktop.
