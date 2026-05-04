@@ -1,11 +1,48 @@
 {
   "name": "ask-another",
-  "version": "2.0.8",
+  "version": "2.0.9",
   "description": "Query other AI models — including image and research models — through a unified MCP interface.",
   "author": {
     "name": "Matthew G Johnson",
     "url": "https://github.com/matthewgjohnson"
   },
   "homepage": "https://github.com/matthewgjohnson/ask-another",
-  "keywords": ["llm", "openai", "gemini", "openrouter", "research", "image-generation", "multi-model"]
+  "keywords": ["llm", "openai", "gemini", "openrouter", "research", "image-generation", "multi-model"],
+  "userConfig": {
+    "provider_openai": {
+      "type": "string",
+      "title": "OpenAI API Key (optional)",
+      "description": "Your OpenAI API key (starts with 'sk-'). Leave blank to skip OpenAI.",
+      "sensitive": true,
+      "required": false
+    },
+    "provider_gemini": {
+      "type": "string",
+      "title": "Gemini API Key (optional)",
+      "description": "Your Google AI Studio API key. Leave blank to skip Gemini.",
+      "sensitive": true,
+      "required": false
+    },
+    "provider_openrouter": {
+      "type": "string",
+      "title": "OpenRouter API Key (optional)",
+      "description": "Your OpenRouter API key (starts with 'sk-or-'). Leave blank to skip OpenRouter.",
+      "sensitive": true,
+      "required": false
+    },
+    "zero_data_retention": {
+      "type": "boolean",
+      "title": "Zero Data Retention (OpenRouter)",
+      "description": "Filter OpenRouter results to ZDR-compatible models only.",
+      "default": true,
+      "required": false
+    },
+    "open_generated_images": {
+      "type": "boolean",
+      "title": "Open generated images in your image viewer",
+      "description": "Auto-open generated images in your system's default viewer (Preview on macOS).",
+      "default": true,
+      "required": false
+    }
+  }
 }

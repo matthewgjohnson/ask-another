@@ -18,18 +18,14 @@ Done. The 10 tools (see below) are now available to Claude Desktop.
 
 This repo doubles as a Claude Code plugin marketplace. Install in two steps:
 
-```bash
-export PROVIDER_OPENAI=sk-your-openai-key
-export PROVIDER_GEMINI=your-google-key
-export PROVIDER_OPENROUTER=sk-or-your-openrouter-key
-```
-…then in Claude Code:
 ```
 /plugin marketplace add matthewgjohnson/ask-another
 /plugin install ask-another@ask-another
 ```
 
-(Drop any provider env var you don't have a key for; at least one is required.) Requires [uv](https://docs.astral.sh/uv/) on PATH (`brew install uv` on macOS). Plugin auto-updates when the marketplace's repo gets new commits.
+Claude Code will prompt for your API keys and other settings during install — no shell env vars or JSON editing required. Sensitive values are stored in your system keychain. At least one provider key is needed; leave the others blank.
+
+Requires [uv](https://docs.astral.sh/uv/) on PATH (`brew install uv` on macOS). Plugin auto-updates when the marketplace's repo gets new commits.
 
 ## Other MCP clients (Cursor, Windsurf, …)
 

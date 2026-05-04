@@ -3,11 +3,11 @@
     "command": "uvx",
     "args": ["--from", "git+https://github.com/matthewgjohnson/ask-another", "ask-another"],
     "env": {
-      "PROVIDER_OPENAI": "${PROVIDER_OPENAI}",
-      "PROVIDER_GEMINI": "${PROVIDER_GEMINI}",
-      "PROVIDER_OPENROUTER": "${PROVIDER_OPENROUTER}",
-      "ZERO_DATA_RETENTION": "${ASK_ANOTHER_ZDR:-true}",
-      "OPEN_GENERATED_IMAGES": "${ASK_ANOTHER_OPEN_IMAGES:-true}",
+      "PROVIDER_OPENAI": "${user_config.provider_openai}",
+      "PROVIDER_GEMINI": "${user_config.provider_gemini}",
+      "PROVIDER_OPENROUTER": "${user_config.provider_openrouter}",
+      "ZERO_DATA_RETENTION": "${user_config.zero_data_retention}",
+      "OPEN_GENERATED_IMAGES": "${user_config.open_generated_images}",
       "CACHE_TTL_MINUTES": "360"
     }
   }
