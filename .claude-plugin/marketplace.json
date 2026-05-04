@@ -11,7 +11,7 @@
       "name": "ask-another",
       "description": "Query other AI models — including image and research models — through a unified MCP interface.",
       "category": "ai",
-      "source": ".",
+      "source": "./plugins/ask-another",
       "homepage": "https://github.com/matthewgjohnson/ask-another",
       "tags": ["llm", "multi-model", "research", "image-generation"]
     }

@@ -49,4 +49,4 @@ Makefile
 
 # Claude Code plugin metadata — used by CC, irrelevant inside the .mcpb
 .claude-plugin/
-.mcp.json
+plugins/
