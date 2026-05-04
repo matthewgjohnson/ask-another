@@ -29,3 +29,9 @@ Markdown Documentation Standards v3-03.md
 # MCPB / DXT bundles (built artifacts)
 *.mcpb
 *.dxt
+
+# Internal planning docs (untracked; not user-facing)
+DESIGN.md
+DESIGN-v1.md
+PLAN.md
+docs/superpowers/
