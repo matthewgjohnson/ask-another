@@ -2,34 +2,24 @@
 
 An MCP server that gives your AI assistant access to other LLMs. Query hundreds of models across OpenAI, Google, and OpenRouter through a single interface — with model discovery, usage-based favourites, and automatic enrichment (Elo ratings, pricing, knowledge cutoffs). Includes deep-research jobs and image generation across multiple model families.
 
-## Prerequisite
+## Install for Claude Desktop (CDA)
 
-[uv](https://docs.astral.sh/uv/). Install via `brew install uv` (macOS / Linux with Homebrew) or `winget install astral-sh.uv` (Windows). See [docs/install.md](docs/install.md) for distro-specific options.
+1. **Install [uv](https://docs.astral.sh/uv/)** — `brew install uv` (macOS / Linux with Homebrew) or `winget install astral-sh.uv` (Windows). See [docs/install.md](docs/install.md) for other platforms.
+2. **Download** the latest `ask-another.mcpb` from [Releases](https://github.com/matthewgjohnson/ask-another/releases).
+3. **Double-click** the `.mcpb` file — Claude Desktop opens an install dialog and prompts for your API keys.
+4. **Paste at least one** provider key — OpenAI (`sk-…`), Google AI Studio (Gemini), or OpenRouter (`sk-or-…`). Leave the others blank.
+5. **Click Enable.** First launch downloads Python dependencies via uv (~30s); after that, sub-second.
 
-## Quick Start (Claude Desktop)
+## Install for Claude Code (CC)
 
-1. **Download** the latest `ask-another.mcpb` from [Releases](https://github.com/matthewgjohnson/ask-another/releases).
-2. **Double-click** the `.mcpb` file. Claude Desktop opens an install dialog.
-3. **Paste your API keys** into the prompts (any one is enough — leave others blank to skip):
-   - OpenAI key (starts with `sk-`)
-   - Google AI Studio key (Gemini)
-   - OpenRouter key (starts with `sk-or-`)
-4. **Click Enable.** First launch downloads dependencies (~30s with progress UI); after that, sub-second.
-
-Done. The 10 tools (see below) are now available to Claude Desktop.
-
-## Quick Start (Claude Code)
-
-This repo doubles as a Claude Code plugin marketplace. Install in two steps:
-
-```
-/plugin marketplace add matthewgjohnson/ask-another
-/plugin install ask-another@ask-another
-```
-
-Then enter your keys: open `/plugin` → **ask-another** → **Configure options**, paste any one provider key (others can stay blank), and Save. Run `/reload-plugins` to apply.
-
-To get future updates without uninstall/reinstall, enable auto-update from `/plugin` → **Marketplaces** → `matthewgjohnson/ask-another`. Off by default for third-party marketplaces.
+1. **Install [uv](https://docs.astral.sh/uv/)** — `brew install uv` (macOS / Linux with Homebrew) or `winget install astral-sh.uv` (Windows). See [docs/install.md](docs/install.md) for other platforms.
+2. **Add the marketplace and install:**
+   ```
+   /plugin marketplace add matthewgjohnson/ask-another
+   /plugin install ask-another@ask-another
+   ```
+3. **Enter your keys**: open `/plugin` → **ask-another** → **Configure options**, paste at least one provider key, and Save. Run `/reload-plugins` to apply.
+4. **Optional**: enable auto-update at `/plugin` → **Marketplaces** → `matthewgjohnson/ask-another` so future versions install on CC startup.
 
 ## Other MCP clients (Cursor, Windsurf, …)
 
