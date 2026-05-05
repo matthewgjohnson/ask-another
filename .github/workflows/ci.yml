@@ -26,14 +26,14 @@ jobs:
       - uses: astral-sh/setup-uv@v3
       - run: make smoke
 
-  auto-bump:
+  release:
     needs: [verify, test, smoke]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && !contains(github.event.head_commit.message, '[skip ci]')
     runs-on: ubuntu-latest
     permissions:
       contents: write
     concurrency:
-      group: auto-bump
+      group: release
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
@@ -48,17 +48,33 @@ jobs:
           IFS=. read -r new_major new_minor _ <<< "$new"
           if [ "$old_major" != "$new_major" ] || [ "$old_minor" != "$new_minor" ]; then
             echo "Deliberate bump detected ($old -> $new); skipping auto-bump."
-            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "skip_bump=true" >> "$GITHUB_OUTPUT"
           else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "skip_bump=false" >> "$GITHUB_OUTPUT"
           fi
-      - name: Bump patch and push
-        if: steps.detect.outputs.skip != 'true'
+      - name: Configure git as bot
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+      - name: Bump patch and push
+        if: steps.detect.outputs.skip_bump != 'true'
+        run: |
           make bump-patch
           new_version=$(python3 -c 'import json; print(json.load(open("manifest.json"))["version"])')
           git add manifest.json plugins/ask-another/.claude-plugin/plugin.json
           git commit -m "chore: bump patch to $new_version [skip ci]"
           git push origin main
+      - name: Build mcpb
+        run: make mcpb
+      - name: Tag and create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          version=$(python3 -c 'import json; print(json.load(open("manifest.json"))["version"])')
+          if git ls-remote --tags origin "v$version" | grep -q "refs/tags/v$version"; then
+            echo "Tag v$version already exists on origin; skipping release."
+            exit 0
+          fi
+          git tag -a "v$version" -m "Release v$version"
+          git push origin "v$version"
+          gh release create "v$version" ./ask-another.mcpb --title "v$version" --generate-notes

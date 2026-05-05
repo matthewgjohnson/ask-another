@@ -1,12 +1,13 @@
 SHELL := /bin/bash
-.PHONY: help test smoke integration mcpb verify bump-patch bump-minor bump-major install-hooks release clean
+.PHONY: help test smoke integration mcpb verify validate bump-patch bump-minor bump-major install-hooks release clean
 
 help:
 	@echo "Targets:"
 	@echo "  make test              Run unit tests (fast, no network)"
 	@echo "  make smoke             Run MCP boot smoke tests (no provider keys needed)"
 	@echo "  make integration       Run live integration tests (requires PROVIDER_* env vars)"
-	@echo "  make verify            Check manifest.json and plugin.json versions match"
+	@echo "  make verify            Check manifest.json and plugin.json versions match (fast)"
+	@echo "  make validate          verify + npx mcpb validate manifest.json (opt-in pre-push check)"
 	@echo "  make mcpb              Validate manifest and build ask-another.mcpb"
 	@echo "  make bump-patch        Bump patch version in manifest.json + plugin.json"
 	@echo "  make bump-minor        Bump minor version (zero patch)"
@@ -33,6 +34,10 @@ verify:
 	    echo "ERROR: manifest.json ($$manifest_version) != plugin.json ($$plugin_version)"; exit 1; \
 	  fi; \
 	  echo "OK: versions match at $$manifest_version"
+
+validate: verify
+	@npx -y @anthropic-ai/mcpb validate manifest.json
+	@echo "OK: mcpb manifest valid"
 
 define BUMP_SCRIPT
 import re, sys
