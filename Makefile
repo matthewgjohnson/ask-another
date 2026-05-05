@@ -1,5 +1,5 @@
 SHELL := /bin/bash
-.PHONY: help test smoke integration mcpb verify bump-patch bump-minor bump-major push install-hooks release clean
+.PHONY: help test smoke integration mcpb verify bump-patch bump-minor bump-major install-hooks release clean
 
 help:
 	@echo "Targets:"
@@ -11,7 +11,6 @@ help:
 	@echo "  make bump-patch        Bump patch version in manifest.json + plugin.json"
 	@echo "  make bump-minor        Bump minor version (zero patch)"
 	@echo "  make bump-major        Bump major version (zero minor + patch)"
-	@echo "  make push              bump-patch + commit + push origin/main (clean tree required)"
 	@echo "  make install-hooks     Set core.hooksPath to .githooks (pre-commit runs make verify)"
 	@echo "  make release VERSION=X.Y.Z"
 	@echo "                         Verify clean tree + manifest/plugin versions match,"
@@ -64,15 +63,6 @@ bump-minor:
 
 bump-major:
 	@python3 -c "$$BUMP_SCRIPT" major
-
-push:
-	@if [ -n "$$(git status --porcelain)" ]; then echo "ERROR: working tree dirty — commit your changes first"; exit 1; fi
-	@$(MAKE) -s verify
-	@$(MAKE) -s bump-patch
-	@new_version=$$(python3 -c 'import json; print(json.load(open("manifest.json"))["version"])'); \
-	  git add manifest.json plugins/ask-another/.claude-plugin/plugin.json && \
-	  git commit -m "chore: bump patch to $$new_version" && \
-	  git push origin main
 
 install-hooks:
 	@git config core.hooksPath .githooks

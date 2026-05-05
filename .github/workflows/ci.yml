@@ -25,3 +25,40 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v3
       - run: make smoke
+
+  auto-bump:
+    needs: [verify, test, smoke]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && !contains(github.event.head_commit.message, '[skip ci]')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: auto-bump
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - name: Detect deliberate minor/major bump
+        id: detect
+        run: |
+          old=$(git show HEAD~1:manifest.json | python3 -c 'import sys, json; print(json.load(sys.stdin)["version"])')
+          new=$(python3 -c 'import json; print(json.load(open("manifest.json"))["version"])')
+          IFS=. read -r old_major old_minor _ <<< "$old"
+          IFS=. read -r new_major new_minor _ <<< "$new"
+          if [ "$old_major" != "$new_major" ] || [ "$old_minor" != "$new_minor" ]; then
+            echo "Deliberate bump detected ($old -> $new); skipping auto-bump."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Bump patch and push
+        if: steps.detect.outputs.skip != 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          make bump-patch
+          new_version=$(python3 -c 'import json; print(json.load(open("manifest.json"))["version"])')
+          git add manifest.json plugins/ask-another/.claude-plugin/plugin.json
+          git commit -m "chore: bump patch to $new_version [skip ci]"
+          git push origin main
