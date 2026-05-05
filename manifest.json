@@ -2,7 +2,7 @@
   "manifest_version": "0.4",
   "name": "ask-another",
   "display_name": "Ask Another",
-  "version": "2.0.14",
+  "version": "2.0.15",
   "description": "Query other AI models — including image and research models — through a unified MCP interface",
   "long_description": "Ask Another lets Claude query other AI models (OpenAI, Gemini, OpenRouter, and more) for second opinions, deep research, image generation, or capabilities beyond Claude's own. Configure providers via API keys; models are discovered automatically. Includes background research jobs, image generation across multiple model families, and personal annotations on models.",
   "author": {
