@@ -8,7 +8,7 @@ help:
 	@echo "  make integration  Run live integration tests (requires PROVIDER_* env vars)"
 	@echo "  make mcpb         Validate manifest and build ask-another.mcpb"
 	@echo "  make release VERSION=X.Y.Z"
-	@echo "                    Verify clean tree + manifest version match,"
+	@echo "                    Verify clean tree + manifest/plugin versions match,"
 	@echo "                    build .mcpb, tag vX.Y.Z, push, create GitHub release"
 	@echo "  make clean        Remove built artifacts"
 
@@ -33,6 +33,10 @@ release: mcpb
 	@manifest_version=$$(python3 -c 'import json; print(json.load(open("manifest.json"))["version"])'); \
 	  if [ "$$manifest_version" != "$(VERSION)" ]; then \
 	    echo "ERROR: manifest.json version ($$manifest_version) does not match VERSION=$(VERSION)"; exit 1; \
+	  fi
+	@plugin_version=$$(python3 -c 'import json; print(json.load(open("plugins/ask-another/.claude-plugin/plugin.json"))["version"])'); \
+	  if [ "$$plugin_version" != "$(VERSION)" ]; then \
+	    echo "ERROR: plugin.json version ($$plugin_version) does not match VERSION=$(VERSION)"; exit 1; \
 	  fi
 	@if git rev-parse "v$(VERSION)" >/dev/null 2>&1; then echo "ERROR: tag v$(VERSION) already exists"; exit 1; fi
 	git tag -a "v$(VERSION)" -m "Release v$(VERSION)"
