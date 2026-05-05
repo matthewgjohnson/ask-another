@@ -1,6 +1,6 @@
 {
   "name": "ask-another",
-  "version": "2.0.13",
+  "version": "2.0.14",
   "description": "Query other AI models — including image and research models — through a unified MCP interface.",
   "author": {
     "name": "Matthew G Johnson",
