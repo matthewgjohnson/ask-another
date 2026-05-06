@@ -313,6 +313,8 @@ def _load_config() -> None:
 
     for var_name, value in os.environ.items():
         if provider_pattern.match(var_name):
+            if not value.strip():
+                continue  # blank — user opted out of this provider
             provider, api_key = _parse_provider_config(var_name, value)
             _provider_registry[provider] = api_key
 
