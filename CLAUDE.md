@@ -13,6 +13,10 @@ uv sync                                                                    # Ins
 PROVIDER_OPENAI="sk-test" uv run ask-another                               # Run the server locally
 ```
 
+## Release workflow — always pull after push
+
+CI auto-bumps the patch version on every `fix(...)` commit pushed to `main`, then tags and builds the `.mcpb`. The bump appears as a `chore: bump patch to X.Y.Z [skip ci]` commit on `origin/main` that your local won't have. **After any push that may have triggered the bump, `git pull` before doing more work** — otherwise the repo's `manifest.json`/`plugin.json` will be one version behind reality and you'll build/install a stale bundle.
+
 Tests can be run with:
 
 ```bash
