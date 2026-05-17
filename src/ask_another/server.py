@@ -1097,6 +1097,12 @@ def completion(
         _provider_auth_errors.add(provider)
         logger.warning("Auth failed for %s, provider marked unhealthy: %s", provider, exc)
         raise
+    except Exception as exc:
+        logger.warning(
+            "litellm.completion raised for %s: %s: %s",
+            full_model, type(exc).__name__, exc,
+        )
+        raise
     logger.debug("Completion response received from %s", full_model)
 
     # Track usage
