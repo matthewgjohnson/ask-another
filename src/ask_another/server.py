@@ -339,6 +339,97 @@ def _load_config() -> None:
     )
 
 
+def _provider_status(
+    manifest_path: Path | str | None = None,
+    start_path: Path | None = None,
+    *,
+    max_levels: int = 5,
+) -> list[tuple[str, str]]:
+    """Return (name, status_string) pairs for every known provider.
+
+    Locates the plugin manifest via a three-step lookup:
+      1. ``manifest_path`` arg, if provided and the path exists
+      2. ``$CLAUDE_PLUGIN_ROOT`` env var (auto-exported by Claude Code
+         in plugin installs), checking ``.claude-plugin/plugin.json``
+         then ``manifest.json`` under that root
+      3. Walk up from ``start_path`` (default: this file) at most
+         ``max_levels`` ancestors looking for ``manifest.json`` or
+         ``.claude-plugin/plugin.json``
+
+    Reads declared provider names from the manifest's ``user_config``
+    (keys matching ``provider_*``, prefix stripped), then composes with
+    ``_provider_registry`` and ``_provider_errors``. Declared providers
+    come first in manifest order; ad-hoc extras (in registry or errors
+    but not declared) are appended alphabetically. Status is one of:
+    ``not configured``, ``configured``, or ``configured (error: <msg>)``.
+    """
+    resolved: Path | None = None
+
+    if manifest_path is not None:
+        p = Path(manifest_path)
+        if p.is_file():
+            resolved = p
+
+    if resolved is None:
+        plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT")
+        if plugin_root:
+            for candidate in (
+                Path(plugin_root) / ".claude-plugin" / "plugin.json",
+                Path(plugin_root) / "manifest.json",
+            ):
+                if candidate.is_file():
+                    resolved = candidate
+                    break
+
+    if resolved is None:
+        if start_path is None:
+            start_path = Path(__file__).resolve()
+        current = start_path.parent if start_path.is_file() else start_path
+        for _ in range(max_levels):
+            for candidate in (
+                current / "manifest.json",
+                current / ".claude-plugin" / "plugin.json",
+            ):
+                if candidate.is_file():
+                    resolved = candidate
+                    break
+            if resolved is not None:
+                break
+            if current.parent == current:
+                break
+            current = current.parent
+
+    declared: tuple[str, ...] = ()
+    if resolved is not None:
+        try:
+            data = json.loads(resolved.read_text())
+            user_config = data.get("user_config") or {}
+            declared = tuple(
+                key[len("provider_"):]
+                for key in user_config
+                if key.startswith("provider_")
+            )
+        except (json.JSONDecodeError, OSError, AttributeError) as exc:
+            logger.warning(
+                "Could not parse manifest %s: %s", resolved, exc
+            )
+
+    declared_set = set(declared)
+    extras = sorted(
+        (set(_provider_registry) | {p for p, e in _provider_errors.items() if e})
+        - declared_set
+    )
+    out: list[tuple[str, str]] = []
+    for name in list(declared) + extras:
+        if name not in _provider_registry:
+            status = "not configured"
+        else:
+            err = _provider_errors.get(name)
+            status = f"configured (error: {err})" if err else "configured"
+        out.append((name, status))
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Model discovery
 # ---------------------------------------------------------------------------
@@ -769,6 +860,13 @@ def _build_instructions() -> str:
         "Purpose:",
         "  - Ask another LLM for a second opinion.",
         "  - Provide access to other models through litellm.",
+    ]
+    statuses = _provider_status()
+    if statuses:
+        lines.append("Providers:")
+        for name, status in statuses:
+            lines.append(f"  - {name}: {status}")
+    lines.extend([
         "Howto:",
         "  - For a quick query, use completion with a favourite shorthand (see below).",
         "    Shorthand is a provider name (e.g. 'openai') that resolves to your",
@@ -790,7 +888,7 @@ def _build_instructions() -> str:
         "    harder than it should be.",
         "  - If you receive confusing output or a tool call fails, consider calling",
         "    feedback to report the issue — but don't let it block your work.",
-    ]
+    ])
     favourites = _get_favourites(_annotations)
     unhealthy = _unhealthy_providers()
     favourites = [f for f in favourites if f.split("/")[0] not in unhealthy]
@@ -845,12 +943,6 @@ def _build_instructions() -> str:
             count += 1
             if count >= 5:
                 break
-
-    errors = {p: err for p, err in _provider_errors.items() if err}
-    if errors:
-        lines.append("Unavailable Providers:")
-        for provider, err in sorted(errors.items()):
-            lines.append(f"  - {provider}: {err}")
 
     return "\n".join(lines)
 

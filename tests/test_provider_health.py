@@ -95,7 +95,7 @@ def test_build_instructions_excludes_unhealthy_favourites(monkeypatch):
 
 
 def test_build_instructions_shows_unavailable_providers(monkeypatch):
-    """Instructions include an Unavailable Providers section with error messages."""
+    """Instructions surface runtime errors via the unified Providers: section."""
     monkeypatch.setattr(server, "_provider_registry", {
         "openai": "sk-good",
         "gemini": "bad-key",
@@ -106,8 +106,9 @@ def test_build_instructions_shows_unavailable_providers(monkeypatch):
     })
     monkeypatch.setattr(server, "_annotations", {})
     instructions = server._build_instructions()
-    assert "Unavailable Providers:" in instructions
-    assert "gemini: Google API key is required" in instructions
+    assert "Providers:" in instructions
+    assert "gemini: configured (error: Google API key is required)" in instructions
+    assert "Unavailable Providers:" not in instructions
 
 
 def test_search_models_retries_unhealthy_provider(monkeypatch):
@@ -190,8 +191,9 @@ def test_full_flow_healthy_and_unhealthy(monkeypatch):
     instructions = server._build_instructions()
     assert "openai/gpt-5.2" in instructions
     assert "gemini/gemini-3.1-pro" not in instructions
-    assert "Unavailable Providers:" in instructions
-    assert "gemini: API key invalid" in instructions
+    assert "Providers:" in instructions
+    assert "gemini: configured (error: API key invalid)" in instructions
+    assert "Unavailable Providers:" not in instructions
 
 
 def test_generate_image_auth_error_marks_provider_unhealthy(monkeypatch):
