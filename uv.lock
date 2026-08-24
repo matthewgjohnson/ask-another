@@ -184,9 +184,9 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "litellm", specifier = ">=1.83.0" },
-    { name = "mcp", specifier = ">=1.0.0" },
-    { name = "pillow", specifier = ">=10.0.0" },
+    { name = "litellm", specifier = ">=1.83.0,<2" },
+    { name = "mcp", specifier = ">=1.0.0,<2" },
+    { name = "pillow", specifier = ">=10.0.0,<13" },
 ]
 
 [package.metadata.requires-dev]

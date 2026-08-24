@@ -4,10 +4,14 @@ version = "2.0.0"
 description = "MCP server for querying other LLMs through a unified interface"
 requires-python = ">=3.10"
 license = "MIT"
+# Upper bounds are load-bearing: `uvx --from git+...` ignores uv.lock and
+# re-resolves these specifiers on every install, so an unbounded major is a
+# live outage waiting on upstream's release schedule. mcp 2.0 deleted
+# `mcp.server.fastmcp` and broke this server exactly that way.
 dependencies = [
-    "mcp>=1.0.0",
-    "litellm>=1.83.0",
-    "pillow>=10.0.0",
+    "mcp>=1.0.0,<2",
+    "litellm>=1.83.0,<2",
+    "pillow>=10.0.0,<13",
 ]
 
 [project.scripts]
