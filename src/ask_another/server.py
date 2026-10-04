@@ -11,6 +11,7 @@ import logging.handlers
 import json
 import os
 import re
+import sys
 import time
 import urllib.request
 from contextlib import asynccontextmanager
@@ -26,6 +27,7 @@ import anyio
 import anyio.abc
 import anyio.to_thread
 from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.stdio import stdio_server
 from mcp.types import ToolAnnotations
 
 # In-memory annotations: {model_id: {metadata: {...}, usage: {...}, annotations: {...}}}
@@ -1876,9 +1878,29 @@ async def cancel_research(
     return f"Job {job_id} cancelled."
 
 
+def _isolate_stdout() -> anyio.AsyncFile[str]:
+    """Reserve the real stdout for JSON-RPC and send every other write to stderr.
+
+    LiteLLM prints to stdout. On the stdio transport those lines corrupt the
+    protocol stream, and under concurrent calls the client drops the connection.
+    """
+    protocol_fd = os.dup(1)
+    os.dup2(2, 1)
+    sys.stdout = sys.stderr
+    return anyio.wrap_file(io.TextIOWrapper(os.fdopen(protocol_fd, "wb"), encoding="utf-8"))
+
+
 def main() -> None:
-    """Run the MCP server."""
-    mcp.run()
+    """Run the MCP server over stdio, with stdout isolated for the protocol."""
+    protocol_out = _isolate_stdout()
+
+    async def serve() -> None:
+        async with stdio_server(stdout=protocol_out) as (read_stream, write_stream):
+            await mcp._mcp_server.run(
+                read_stream, write_stream, mcp._mcp_server.create_initialization_options()
+            )
+
+    anyio.run(serve)
 
 
 if __name__ == "__main__":
